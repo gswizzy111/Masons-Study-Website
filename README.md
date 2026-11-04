@@ -16,6 +16,35 @@ v4, Supabase (Postgres, Auth, Storage, RLS), Claude through `@anthropic-ai/sdk`,
 deployed on Netlify. The build contract for contributors is
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
+## Database schema: `study`, in a shared project
+
+Every Mason's Study table and function lives in its own Postgres schema,
+`study`, not in `public`. The hosted database is the existing Supabase
+project **card-doc-test-temp** (`kuvnqapzuevhpviilqpc`), which also holds a
+test copy of The Card Doc in the `public` schema (orders, cards, profiles,
+its own storage buckets). Keeping Mason's Study in `study` means neither app
+can collide with or change the other's tables, and Mason's Study can be
+removed later without touching the Card Doc data.
+
+- The app's three Supabase clients (`lib/supabase/client.ts`, `server.ts`,
+  `admin.ts`) and `scripts/seed-demo.mjs` send every query and RPC to
+  `study` (`DB_SCHEMA` in `lib/supabase/schema.ts`). Code keeps using plain
+  table names (`.from("cards")`).
+- The schema has to be exposed through the Data API: locally
+  `supabase/config.toml` does it; on the hosted project it is a dashboard
+  setting (see the checklist below). Without it every request fails with
+  HTTP 406.
+- Only three things live outside `study`, all named so they can't clash:
+  the private Storage bucket `materials`, three policies on
+  `storage.objects` named `study: ...` (they only cover that bucket), and
+  the trigger `study_on_auth_user_created` on `auth.users`, which creates a
+  `study.profiles` row for each new account and never blocks a sign-up.
+- Auth is shared: one pool of users for both apps, and the URL settings,
+  email templates and sign-up switches under Authentication apply to both.
+  An account made in either app can sign in to the other.
+- Signed-in users and the service role get explicit grants on `study`;
+  `anon` gets nothing, so signed-out requests can't read it at all.
+
 ## Local development
 
 You need Node 20.9 or newer and Docker.
@@ -34,8 +63,10 @@ You need Node 20.9 or newer and Docker.
    ```
 
    `npx supabase status` prints the API URL and keys. Studio runs at
-   http://127.0.0.1:54323 and the test inbox (for confirmation emails) at
-   http://127.0.0.1:54324.
+   http://127.0.0.1:54323 (pick the `study` schema in the Table Editor) and
+   the test inbox (for confirmation emails) at http://127.0.0.1:54324.
+   Locally, sign-up and reset emails use the templates in
+   `supabase/templates/` (links to `/auth/confirm`).
 
 3. Create `.env.local` from the template and fill it in:
 
