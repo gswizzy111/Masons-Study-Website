@@ -3,6 +3,7 @@
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { siteUrlFrom } from "@/lib/env";
+import { isAllowedEmail, NOT_ALLOWED_MESSAGE } from "@/lib/access";
 import { createClient, getUser, safeNextPath } from "@/lib/supabase/server";
 import { authErrorMessage, GENERIC_AUTH_ERROR } from "@/components/profile/auth-errors";
 import {
@@ -54,6 +55,11 @@ export async function signIn(
         at: Date.now(),
       };
     }
+    // Logins are shared with another app in the same Supabase project.
+    if (!isAllowedEmail(data.user.email)) {
+      await supabase.auth.signOut();
+      return { status: "error", message: NOT_ALLOWED_MESSAGE, values: { email }, at: Date.now() };
+    }
     const { data: profile } = await supabase
       .from("profiles")
       .select("onboarded_at")
@@ -83,6 +89,14 @@ export async function signUp(
     password: validatePassword(password),
   });
   if (fieldErrors) return { status: "error", fieldErrors, values, at: Date.now() };
+  if (!isAllowedEmail(email)) {
+    return {
+      status: "error",
+      fieldErrors: { email: "This email can't make an account on Mason's Study." },
+      values,
+      at: Date.now(),
+    };
+  }
 
   let hasSession = false;
   try {

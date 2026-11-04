@@ -250,7 +250,9 @@ otp_expiry = 3600
 
 # Email links that work on any device: they carry a token_hash that
 # /auth/confirm verifies, so they don't depend on the browser that asked.
-# Paste the same templates into the hosted project (see README).
+# Local only. Do NOT paste these into card-doc-test-temp: email templates
+# are project-wide there and shared with the Card Doc test copy. Its default
+# templates work with the app's /auth/callback links (see README).
 [auth.email.template.confirmation]
 subject = "Confirm your email for Mason's Study"
 content_path = "./supabase/templates/confirmation.html"

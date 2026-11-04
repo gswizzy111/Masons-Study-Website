@@ -5,6 +5,7 @@
 // under the 60 s function limit: Claude is cut off at ~50 s.
 import { after } from "next/server";
 import { createClient, getUser } from "@/lib/supabase/server";
+import { isAllowedEmail, NOT_ALLOWED_MESSAGE } from "@/lib/access";
 import {
   AiNotConfiguredError,
   REFUSAL_MESSAGE,
@@ -84,6 +85,7 @@ export async function POST(request: Request) {
 
   const user = await getUser();
   if (!user) return fail(401, "unauthorized", "Your session ended. Log in again to keep chatting.");
+  if (!isAllowedEmail(user.email)) return fail(403, "forbidden", NOT_ALLOWED_MESSAGE);
   const supabase = await createClient();
 
   // Everything below is read with the user's client, so RLS limits it to

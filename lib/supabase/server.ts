@@ -8,6 +8,7 @@ import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { publicEnv } from "@/lib/env";
 import { safeNextPath } from "@/lib/safe-next";
 import { DB_SCHEMA } from "@/lib/supabase/schema";
+import { isAllowedEmail } from "@/lib/access";
 
 /** Header proxy.ts sets on every page request: the current pathname. */
 export const PATHNAME_HEADER = "x-pathname";
@@ -72,6 +73,8 @@ export async function requireUser(): Promise<{ supabase: SupabaseClient; user: U
     const next = path ? `${path}${search.startsWith("?") ? search : ""}` : "/dashboard";
     redirect(`/login?next=${encodeURIComponent(next)}`);
   }
+  // Logins are shared with another app in the same Supabase project.
+  if (!isAllowedEmail(user.email)) redirect("/not-allowed");
   const supabase = await createClient();
   return { supabase, user };
 }

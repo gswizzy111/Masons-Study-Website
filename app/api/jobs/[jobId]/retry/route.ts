@@ -4,6 +4,7 @@
 // A queued job is simply nudged. A restart counts toward the same per-user
 // limit as a new job (429 when reached). See docs/ARCHITECTURE.md section 8.
 import { createClient, getUser } from "@/lib/supabase/server";
+import { isAllowedEmail, NOT_ALLOWED_MESSAGE } from "@/lib/access";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { triggerJob } from "@/lib/jobs/trigger";
 import { takeQuota } from "@/lib/usage-limits";
@@ -33,6 +34,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ jobId: str
 
   const user = await getUser();
   if (!user) return json({ error: "Your session ended. Log in again to continue." }, 401);
+  if (!isAllowedEmail(user.email)) return json({ error: NOT_ALLOWED_MESSAGE }, 403);
   const supabase = await createClient();
 
   // RLS: users can read only their own jobs.

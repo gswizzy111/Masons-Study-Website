@@ -85,6 +85,7 @@ AI output: study guide style, tutor answers, question style, video picks.
 | `ANTHROPIC_MODEL` | server only, optional | default `claude-opus-5-5` |
 | `ANTHROPIC_BASE_URL` | optional | SDK reads it; used to point local tests at a mock |
 | `YOUTUBE_API_KEY` | server only, optional | YouTube Data API v3 search |
+| `ALLOWED_EMAILS` | server only, required in production | comma-separated addresses allowed to use the app (logins are shared with the Card Doc test copy); unset = anyone (local dev). Enforced in `lib/access.ts`: sign-in/up, `requireUser()`, `/api/*` (403) and the job runner |
 | `NEXT_PUBLIC_SITE_URL` | optional | absolute URL for auth email links (falls back to request origin); set it in production |
 
 There is no schema variable: `DB_SCHEMA` in `lib/supabase/schema.ts` is
@@ -95,6 +96,64 @@ not connected yet" state instead of crashing. When `YOUTUBE_API_KEY` is
 missing, videos fall back to YouTube search links.
 
 ## 4. Data model
+
+### Schema and hosting
+
+Every table and function below lives in the Postgres schema `study`. The
+hosted database is the Supabase project **card-doc-test-temp**
+(`kuvnqapzuevhpviilqpc`), shared with a test copy of The Card Doc that owns
+the `public` schema (orders, cards, profiles, `public.set_updated_at()`,
+buckets `app-config`, `signed-documents`, `card-photos`) and must keep
+working untouched. A separate schema keeps the two apps from colliding
+(both have `profiles`, `cards` and a `set_updated_at()`), and lets Mason's
+Study be dropped as a unit.
+
+How the app reaches it:
+
+- `lib/supabase/schema.ts` exports `DB_SCHEMA = "study"`. The browser,
+  server and admin clients pass `db: { schema: DB_SCHEMA }`, so PostgREST
+  gets `Accept-Profile: study` on reads and `Content-Profile: study` on
+  writes and RPC. `.from("cards")`, `{ count: "exact", head: true }`,
+  embeds such as `cards(count)` and `supabase.rpc("take_ai_quota")` all
+  resolve inside `study`. `scripts/seed-demo.mjs` sets the same schema.
+  `proxy.ts` only calls `auth.*`, so its client needs no schema.
+- The Netlify background function (`netlify/functions/run-job.mts` →
+  `lib/jobs/run-job.ts` → `lib/supabase/admin.ts`) uses the admin client,
+  so the job runner reads and writes `study` too. Storage calls are not
+  schema-bound.
+- `study` must be in the Data API's exposed schemas: `supabase/config.toml`
+  (`[api] schemas`) locally, Project Settings > Data API > Exposed schemas on
+  the hosted project. Without it every request answers 406 (`PGRST106`).
+
+Objects outside `study`, all named so they can't clash with the other app:
+the private bucket `materials`; three `storage.objects` policies named
+`study: ...` that only match `bucket_id = 'materials'`; and the trigger
+`study_on_auth_user_created` on `auth.users` →
+`study.handle_new_user()`, which inserts a `study.profiles` row and swallows
+its own errors so it never blocks a sign-up in either app.
+
+Shared, project-wide: the auth user pool (an account made in either app can
+sign in to both), Authentication URL configuration, email templates, SMTP,
+and the sign-up and confirmation switches. Production setup for this is in
+the README ("Production setup checklist").
+
+Rules for new migrations:
+
+- Qualify every object with `study.`; never create, alter or grant anything
+  in `public`.
+- Functions: `set search_path = ''` and fully qualified names. Postgres
+  gives new functions `EXECUTE` to `PUBLIC`; revoke it (and from `anon`,
+  `authenticated`) for anything internal, as `20261104000002` does.
+- Grants: `anon` gets nothing on `study`. The init migration's default
+  privileges cover tables and sequences created later by the same role;
+  grant explicitly to `authenticated, service_role` in each new migration
+  anyway, in case it runs as a different role.
+- Anything that must live in a shared schema (`storage`, `auth`) gets a
+  `study`-prefixed name and a guard that limits it to this app's rows.
+- Apply them with the SQL editor or the Supabase MCP, never
+  `supabase db push` (the remote history holds the Card Doc migrations).
+
+### Tables
 
 Source of truth: `supabase/migrations/20261104000000_init.sql`. Types:
 `lib/types.ts`. Every table has `user_id` (defaults to `auth.uid()` for normal
@@ -134,6 +193,8 @@ Owner in brackets. "stub" means the foundation writes a compiling placeholder
 with the final signature and the named builder replaces the body.
 
 ### Platform [F2: platform]
+- `lib/supabase/schema.ts`: `DB_SCHEMA = "study"` (no imports; bundled by the
+  Netlify function through `admin.ts`).
 - `lib/env.ts`: `publicEnv` `{ supabaseUrl, supabaseAnonKey }`;
   `serverEnv()` → `{ serviceRoleKey, anthropicApiKey, anthropicModel, youtubeApiKey }`
   (missing values are `undefined`, never throws); `aiConfigured(): boolean`;
@@ -439,6 +500,7 @@ and report it.
   may still be in progress, so re-run later before reporting.
 - The local database (Docker) has the migration applied:
   `psql postgresql://postgres:postgres@127.0.0.1:54322/postgres`. You may read
-  it to check column names; don't change the schema.
+  it to check column names (tables are in `study`: `\dt study.*`); don't
+  change the schema.
 - Finish with: files written, what works, anything stubbed or not done, and any
   contract change.

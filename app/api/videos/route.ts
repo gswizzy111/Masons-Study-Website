@@ -8,6 +8,7 @@
 // searches are limited: at most MAX_TOPICS per request, a refresh of the same
 // topic at most every 10 minutes, and a per-user daily budget.
 import { createClient, getUser } from "@/lib/supabase/server";
+import { isAllowedEmail, NOT_ALLOWED_MESSAGE } from "@/lib/access";
 import { aiConfigured, youtubeConfigured } from "@/lib/env";
 import { friendlyAiError } from "@/lib/ai/client";
 import { MAX_TOPICS } from "@/lib/ai/prompts";
@@ -87,6 +88,7 @@ export async function POST(request: Request) {
 
   const user = await getUser();
   if (!user) return fail(401, "Sign in to find videos.");
+  if (!isAllowedEmail(user.email)) return fail(403, NOT_ALLOWED_MESSAGE);
   const supabase = await createClient();
 
   // RLS limits this to the signed-in user's own sets.

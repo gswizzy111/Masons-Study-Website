@@ -3,6 +3,7 @@
 // Relative imports only and no Next-only modules: the Netlify background
 // function (netlify/functions/run-job.mts) bundles this file outside Next.
 import { createAdminClient } from "../supabase/admin";
+import { allowedEmails, isAllowedEmail, NOT_ALLOWED_MESSAGE } from "../access";
 import {
   buildSet,
   CONTINUE_OPTION,
@@ -95,6 +96,16 @@ export async function runJob(jobId: string, opts: RunJobOptions = {}): Promise<v
   }
   if (!claimed) return;
   const job = claimed as Job;
+
+  // Jobs can be inserted straight through the REST API, and logins are shared
+  // with another app, so check the owner before spending any credits.
+  if (allowedEmails()) {
+    const { data: owner } = await admin.auth.admin.getUserById(job.user_id);
+    if (!isAllowedEmail(owner?.user?.email)) {
+      await fail(admin, job, new JobError(NOT_ALLOWED_MESSAGE));
+      return;
+    }
+  }
   if (!job.started_at) {
     // A continued run keeps the original start time; a new run sets it.
     const startedAt = new Date().toISOString();

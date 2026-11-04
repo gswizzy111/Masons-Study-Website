@@ -8,6 +8,7 @@
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient, getUser } from "@/lib/supabase/server";
+import { isAllowedEmail, NOT_ALLOWED_MESSAGE } from "@/lib/access";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { aiConfigured } from "@/lib/env";
 import { triggerJob } from "@/lib/jobs/trigger";
@@ -102,6 +103,7 @@ export async function POST(request: Request) {
 
   const user = await getUser();
   if (!user) return json({ error: "Your session ended. Log in again to continue." }, 401);
+  if (!isAllowedEmail(user.email)) return json({ error: NOT_ALLOWED_MESSAGE }, 403);
   // Both kinds of job are Claude calls: without a key the job could only fail.
   if (!aiConfigured()) {
     return json({ error: "Claude isn't connected to this site yet.", code: "not_configured" }, 503);

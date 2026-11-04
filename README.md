@@ -157,9 +157,9 @@ are only added to, never switched off.
      Emails > SMTP Settings), Supabase's built-in mailer only delivers to
      members of the Supabase organization's team, a few emails per hour, so
      confirmation and reset emails to the student would not arrive. The
-     simplest way to give the student an account is Authentication > Users
-     > Add user > Create new user, with "Auto Confirm User" on; they then
-     log in and finish onboarding. Custom SMTP is also project-wide (the
+     simplest way to give the student an account is
+     Authentication > Users > Add user > Create new user, with "Auto
+     Confirm User" on; they then log in and finish onboarding. Custom SMTP is also project-wide (the
      Card Doc app sends its own account emails through Resend, but check
      before changing it).
    - "Confirm email", the minimum password length and "Allow new users to
@@ -182,6 +182,12 @@ are only added to, never switched off.
    - `ANTHROPIC_API_KEY` (mark it secret)
    - `NEXT_PUBLIC_SITE_URL`: Mason's Study's production URL (email links
      are built from it)
+   - `ALLOWED_EMAILS`: the student's email (comma-separate several).
+     Logins are shared with the Card Doc test copy and sign-ups stay on for
+     the whole project, so without this any account in the project could
+     use the site and spend the Claude and YouTube keys. Everyone else is
+     turned away at sign-in, sent to `/not-allowed` in the app, and gets 403
+     from `/api/*`; the job runner refuses their jobs too.
    - Optional: `YOUTUBE_API_KEY` (YouTube Data API v3) and `ANTHROPIC_MODEL`
      (defaults to `claude-opus-5-5`)
 
