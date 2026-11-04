@@ -46,6 +46,9 @@ AI output: study guide style, tutor answers, question style, video picks.
   - `cacheComponents` is **off** (removed from `next.config.ts` on purpose).
     Pages that read cookies are dynamic; no `"use cache"` needed.
 - Supabase: `@supabase/ssr` + `@supabase/supabase-js`. Auth is email + password.
+  All app data lives in the Postgres schema **`study`**, never `public` (see
+  section 4, "Schema and hosting"). Every client sets
+  `db: { schema: DB_SCHEMA }`; never create a Supabase client anywhere else.
 - Claude: `@anthropic-ai/sdk` 1.x. See section 7.
 - UI: hand-built components in `components/ui/` (Radix primitives from the
   `radix-ui` package where behavior is hard: dialog, dropdown, tooltip, popover,
@@ -55,7 +58,7 @@ AI output: study guide style, tutor answers, question style, video picks.
   truly need a new package, say so in your final report instead.
 - Imports: use the `@/` alias in app and component code. **Exception:** files
   under `lib/ai/`, `lib/extract/`, `lib/jobs/` (except `start-job.ts` and
-  `use-job.ts`), `lib/supabase/admin.ts`, `lib/env.ts`, `lib/types.ts`,
+  `use-job.ts`), `lib/supabase/admin.ts`, `lib/supabase/schema.ts`, `lib/env.ts`, `lib/types.ts`,
   `lib/mastery.ts` and `lib/learn/` must use **relative imports only** and no
   Next-only modules (`next/*`, `server-only`), because the Netlify background
   function bundles them outside Next.
@@ -75,14 +78,17 @@ AI output: study guide style, tutor answers, question style, video picks.
 
 | Name | Where | Purpose |
 |---|---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` | browser + server | Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_URL` | browser + server | Supabase project URL (production: `https://kuvnqapzuevhpviilqpc.supabase.co`) |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | browser + server | anon / publishable key |
 | `SUPABASE_SERVICE_ROLE_KEY` | server only | job runner (bypasses RLS) |
 | `ANTHROPIC_API_KEY` | server only | Claude |
 | `ANTHROPIC_MODEL` | server only, optional | default `claude-opus-5-5` |
 | `ANTHROPIC_BASE_URL` | optional | SDK reads it; used to point local tests at a mock |
 | `YOUTUBE_API_KEY` | server only, optional | YouTube Data API v3 search |
-| `NEXT_PUBLIC_SITE_URL` | optional | absolute URL for auth email links (falls back to request origin) |
+| `NEXT_PUBLIC_SITE_URL` | optional | absolute URL for auth email links (falls back to request origin); set it in production |
+
+There is no schema variable: `DB_SCHEMA` in `lib/supabase/schema.ts` is
+always `study`.
 
 When `ANTHROPIC_API_KEY` is missing, AI features must show a clear "Claude is
 not connected yet" state instead of crashing. When `YOUTUBE_API_KEY` is
