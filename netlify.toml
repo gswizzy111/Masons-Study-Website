@@ -16,10 +16,12 @@
 # for up to 15 minutes. Settings below are scoped to that function so they
 # never touch the functions the Next.js runtime generates. unpdf loads its
 # PDF.js build with a runtime import, so it ships as a node module instead of
-# being bundled.
+# being bundled. sharp (installed with Next.js) shrinks big phone photos
+# before Claude reads them; it has native parts, so it ships as a node module
+# too, and when it can't load, big photos get a "too large" message instead.
 [functions]
   directory = "netlify/functions"
 
 [functions."run-job"]
   node_bundler = "esbuild"
-  external_node_modules = ["unpdf"]
+  external_node_modules = ["unpdf", "sharp"]

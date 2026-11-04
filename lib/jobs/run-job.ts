@@ -148,8 +148,10 @@ export async function runJob(jobId: string, opts: RunJobOptions = {}): Promise<v
     return;
   }
 
-  // Out of time: re-queue and continue in a fresh run.
-  const continuations = Number(job.options?.continuations ?? 0) + 1;
+  // Out of time: re-queue and continue in a fresh run. The count is clamped
+  // so no stored value can lift the cap.
+  const previous = Math.trunc(Number(job.options?.continuations ?? 0));
+  const continuations = Math.min(MAX_CONTINUATIONS, Number.isFinite(previous) && previous > 0 ? previous : 0) + 1;
   if (continuations > MAX_CONTINUATIONS) {
     await fail(
       admin,

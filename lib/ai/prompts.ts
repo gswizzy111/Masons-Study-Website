@@ -37,10 +37,40 @@ Rules:
 - Output only the transcription. No preamble or closing remarks.
 - If there is no readable study content at all, reply with exactly ${NO_TEXT_SENTINEL}.`;
 
-/** The user-turn instruction that goes with the image or PDF. */
-export function transcribeInstruction(kind: "image" | "pdf", fileName: string): string {
-  const what = kind === "pdf" ? "this scanned PDF" : "this image";
-  return `Transcribe ${what} ("${fileName.replace(/"/g, "'")}") following the rules.`;
+/** "2", "2 and 5", "2, 5 and 9", with runs of three or more as "4 to 7". */
+export function pageList(pages: readonly number[]): string {
+  const sorted = [...new Set(pages)].sort((a, b) => a - b);
+  const items: string[] = [];
+  for (let i = 0; i < sorted.length; ) {
+    let j = i;
+    while (j + 1 < sorted.length && sorted[j + 1] === sorted[j] + 1) j++;
+    if (j - i >= 2) items.push(`${sorted[i]} to ${sorted[j]}`);
+    else for (let k = i; k <= j; k++) items.push(String(sorted[k]));
+    i = j + 1;
+  }
+  return items.length <= 1 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+/**
+ * The user-turn instruction that goes with the image or PDF. With `pages`,
+ * only those pages of the PDF are transcribed (a long scan read in parts, or
+ * the picture pages of an otherwise typed PDF).
+ */
+export function transcribeInstruction(
+  kind: "image" | "pdf",
+  fileName: string,
+  pages?: { numbers: readonly number[]; why: "part" | "pictures" },
+): string {
+  const name = fileName.replace(/"/g, "'");
+  if (kind === "image") return `Transcribe this image ("${name}") following the rules.`;
+  if (!pages || pages.numbers.length === 0) return `Transcribe this scanned PDF ("${name}") following the rules.`;
+  const which = pageList(pages.numbers);
+  const single = pages.numbers.length === 1;
+  const context =
+    pages.why === "pictures"
+      ? `The other pages' text was already read, so transcribe only page${single ? "" : "s"} ${which}: ${single ? "it is" : "they are"} pictures (photos, scans or diagrams).`
+      : `It is long, so it is being read in parts. Transcribe only page${single ? "" : "s"} ${which} in this part.`;
+  return `This is the PDF "${name}". ${context} Start each page with "Page N:" on its own line, where N is the page's number in the PDF. Follow the rules. If none of these pages has readable study content, reply with exactly ${NO_TEXT_SENTINEL}.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -207,6 +237,13 @@ export function examBatchPrompt(input: {
   batchIndex: number;
   batchCount: number;
   avoidStems: string[];
+  /**
+   * When several batches share a topic: the parts of it this batch covers
+   * (guide headings or key terms), so parallel batches don't overlap.
+   */
+  focus?: string[];
+  /** When several batches share a topic: a question angle to lean toward. */
+  angle?: string;
 }): string {
   const { count, topics, plan } = input;
   const mix = (["easy", "medium", "hard"] as const)
@@ -223,6 +260,13 @@ ${input.avoidStems.map((s) => `- ${s}`).join("\n")}`
     input.batchCount > 1
       ? ` This is batch ${input.batchIndex + 1} of ${input.batchCount}, written at the same time as the others, so focus on these topics and vary the angle.`
       : "";
+  const focus = input.focus?.length
+    ? `
+
+Other batches are writing questions on the same topic at the same time. To avoid overlap, build this batch's questions around these parts of the topic:
+${input.focus.map((f) => `- ${f}`).join("\n")}`
+    : "";
+  const angle = input.angle ? `\nLean toward questions about ${input.angle}.` : "";
 
   return `Write ${count} new exam-style multiple-choice question${count === 1 ? "" : "s"}.${batch}
 
@@ -230,5 +274,5 @@ Topics to draw from (use these ids for topic_id):
 ${topics.map((t) => `- ${t.id}: ${t.title}. ${t.summary}`).join("\n")}
 
 Difficulty mix: ${mix}.
-Spread the questions across the topics and across different ideas within them. Each question tests a different fact or skill.${avoid}`;
+Spread the questions across the topics and across different ideas within them. Each question tests a different fact or skill.${angle}${focus}${avoid}`;
 }

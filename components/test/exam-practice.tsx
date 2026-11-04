@@ -372,7 +372,7 @@ export function ExamPractice({
         <p className="mt-2 max-w-[46ch] text-[0.9375rem] leading-relaxed text-ink-2">
           {aiReady
             ? "Have Claude write a batch from your material. Each one is exam style, with an explanation for every choice."
-            : "Exam questions are written by Claude, and Claude isn't connected to this site yet."}
+            : "Exam questions are written by Claude from your material, with an explanation for every choice."}
         </p>
       </Card>
     );
@@ -475,7 +475,12 @@ export function ExamPractice({
         <p className="text-sm text-ink-2">
           {jobActive ? "You can leave this page. It keeps going." : "Usually takes a minute or two."}
         </p>
-        <Button onClick={generate} loading={starting} disabled={jobActive}>
+        <Button
+          variant={questions.length > 0 ? "outline" : "primary"}
+          onClick={generate}
+          loading={starting}
+          disabled={jobActive}
+        >
           {starting ? null : <Sparkles strokeWidth={1.75} aria-hidden />}
           {jobActive ? "Writing questions" : `Write ${genCount} questions`}
         </Button>

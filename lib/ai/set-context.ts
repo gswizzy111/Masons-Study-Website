@@ -2,7 +2,42 @@
 // server client (RLS) or the service-role client (job runner).
 // Relative imports only (bundled by the Netlify function too).
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { MAX_TOPICS } from "./prompts";
 import type { Topic } from "../types";
+
+/** Longest topic title and summary passed on to prompts. */
+export const TOPIC_TITLE_MAX_CHARS = 200;
+export const TOPIC_SUMMARY_MAX_CHARS = 600;
+const TOPIC_ID_MAX_CHARS = 100;
+
+function clipText(value: string, max: number): string {
+  const t = value.replace(/\s+/g, " ").trim();
+  return t.length <= max ? t : `${t.slice(0, max - 1).trimEnd()}…`;
+}
+
+/**
+ * `study_sets.topics` as stored, made safe to prompt with: at most
+ * MAX_TOPICS (the most a build ever writes), unique string ids, titles and
+ * summaries clipped. Users can write this column directly, so every prompt
+ * and job reads topics through here.
+ */
+export function sanitizeTopics(value: unknown): Topic[] {
+  if (!Array.isArray(value)) return [];
+  const out: Topic[] = [];
+  const seen = new Set<string>();
+  for (const raw of value) {
+    if (out.length >= MAX_TOPICS) break;
+    if (!raw || typeof raw !== "object") continue;
+    const t = raw as Record<string, unknown>;
+    const id = typeof t.id === "string" ? t.id.trim().slice(0, TOPIC_ID_MAX_CHARS) : "";
+    const title = typeof t.title === "string" ? clipText(t.title, TOPIC_TITLE_MAX_CHARS) : "";
+    if (!id || !title || seen.has(id)) continue;
+    seen.add(id);
+    const summary = typeof t.summary === "string" ? clipText(t.summary, TOPIC_SUMMARY_MAX_CHARS) : "";
+    out.push({ id, title, summary });
+  }
+  return out;
+}
 
 export type SetContext = {
   title: string;
@@ -67,7 +102,8 @@ function allocate(lengths: number[], budget: number): number[] {
  * `content_text` wrapped in `<material name="...">`, then (with
  * `includeGuide`) each ready guide section in `<guide_section title="...">`.
  * When the total is over `maxChars`, long items are cut evenly and
- * `truncated` is true. Throws if the set can't be read.
+ * `truncated` is true. Topics go through sanitizeTopics. Throws if the set
+ * can't be read.
  */
 export async function loadSetContext(
   supabase: SupabaseClient,
@@ -106,11 +142,14 @@ export async function loadSetContext(
   }
 
   if (opts.includeGuide) {
+    // Written sections, including ones being rewritten right now (a rebuild
+    // keeps the previous text until the new text is in).
     const { data: sections, error: guideError } = await supabase
       .from("guide_sections")
       .select("title, topic_id, content_md, position")
       .eq("set_id", setId)
-      .eq("status", "ready")
+      .in("status", ["ready", "pending", "writing"])
+      .neq("content_md", "")
       .order("position", { ascending: true });
     if (guideError) throw new Error(`Couldn't load the study guide: ${guideError.message}`);
     for (const s of sections ?? []) {
@@ -149,7 +188,7 @@ export async function loadSetContext(
   }
 
   const text = parts.join(separator);
-  const topics = Array.isArray(set.topics) ? (set.topics as Topic[]) : [];
+  const topics = sanitizeTopics(set.topics);
   return {
     title: String(set.title ?? ""),
     topics,

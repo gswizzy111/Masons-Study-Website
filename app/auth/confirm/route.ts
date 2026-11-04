@@ -1,10 +1,11 @@
 // Email links that carry a `token_hash` (custom Supabase email templates:
 // {{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=...&next=...).
 // Unlike /auth/callback, these work in any browser.
-import { NextResponse, type NextRequest } from "next/server";
+import type { NextRequest } from "next/server";
 import type { EmailOtpType } from "@supabase/supabase-js";
 import { createClient, safeNextPath } from "@/lib/supabase/server";
 import { setRecoveryCookie } from "../recovery-cookie";
+import { redirectTo } from "../redirect";
 
 const OTP_TYPES = new Set<string>(["signup", "invite", "magiclink", "recovery", "email_change", "email"]);
 
@@ -15,7 +16,7 @@ function defaultNext(type: EmailOtpType): string {
 }
 
 export async function GET(request: NextRequest) {
-  const { searchParams, origin } = request.nextUrl;
+  const { searchParams } = request.nextUrl;
   const tokenHash = searchParams.get("token_hash");
   const rawType = searchParams.get("type");
   const type = rawType && OTP_TYPES.has(rawType) ? (rawType as EmailOtpType) : null;
@@ -28,7 +29,7 @@ export async function GET(request: NextRequest) {
       if (!error && data.user) {
         // A recovery link always ends on the reset page.
         const target = type === "recovery" ? "/reset-password" : next;
-        const response = NextResponse.redirect(new URL(target, origin));
+        const response = redirectTo(target);
         if (type === "recovery") setRecoveryCookie(response, data.user.id);
         return response;
       }
@@ -39,5 +40,5 @@ export async function GET(request: NextRequest) {
   }
 
   const fallback = type === "recovery" ? "/forgot-password?error=reset_link" : "/login?error=link";
-  return NextResponse.redirect(new URL(fallback, origin));
+  return redirectTo(fallback);
 }

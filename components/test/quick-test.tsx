@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useEffectEvent, useId, useMemo, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ClipboardCheck, Layers } from "lucide-react";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
@@ -11,9 +12,11 @@ import {
   TEST_TYPE_LABELS,
   TEST_TYPE_ORDER,
   buildQuickTest,
+  canOverride,
   gradeQuickTest,
   isAnswered,
   itemCount,
+  progressModeFor,
   type GradedItem,
   type TestQuestion,
   type TestQuestionType,
@@ -49,19 +52,50 @@ type CountChoice = "10" | "20" | "all";
 
 type Phase = "setup" | "taking" | "results";
 
+/** Written answers waiting for the student's review before they change progress. */
+type PendingReview = {
+  items: GradedItem[];
+  /** Every graded item, to update the saved attempt if an answer is re-marked. */
+  all: GradedItem[];
+  retake: boolean;
+  attemptId: string | null;
+};
+
+/** The item's result after the student's own marking. */
+function effectiveCorrect(item: GradedItem, overrides: Readonly<Record<string, boolean>>): boolean {
+  return canOverride(item) ? (overrides[item.questionKey] ?? item.correct) : item.correct;
+}
+
+function attemptDetails(items: readonly GradedItem[], overrides: Readonly<Record<string, boolean>>) {
+  return items.map((i) => {
+    const correct = effectiveCorrect(i, overrides);
+    return {
+      cardId: i.cardId,
+      type: i.type,
+      correct,
+      given: i.given.slice(0, 500),
+      ...(correct !== i.correct ? { markedByYou: true } : {}),
+    };
+  });
+}
+
 /** Quick practice test from the set's cards. */
 export function QuickTest({
   setId,
   setStatus,
   topics,
   cards,
+  examDate = null,
 }: {
   setId: string;
   setStatus: SetStatus;
   topics: Topic[];
   cards: LearnCardRow[];
+  /** The set's exam date (YYYY-MM-DD), so reviews land before it. */
+  examDate?: string | null;
 }) {
   const id = useId();
+  const router = useRouter();
   const topicIds = useMemo(() => new Set(topics.map((t) => t.id)), [topics]);
 
   const topicChoices = useMemo(() => {
@@ -89,6 +123,13 @@ export function QuickTest({
   const [graded, setGraded] = useState<GradedItem[]>([]);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [confirmOpen, setConfirmOpen] = useState(false);
+  /** This round repeats questions whose answers were just shown. */
+  const [retaken, setRetaken] = useState(false);
+  /** Written answers the student re-marked: question key -> counts as right. */
+  const [overrides, setOverrides] = useState<Record<string, boolean>>({});
+  const [leaving, setLeaving] = useState(false);
+  const overridesRef = useRef<Record<string, boolean>>({});
+  const pendingRef = useRef<PendingReview | null>(null);
   const topRef = useRef<HTMLDivElement>(null);
 
   const scopeCards = useMemo(() => {
@@ -114,6 +155,59 @@ export function QuickTest({
     topRef.current?.scrollIntoView({ block: "start", behavior: "auto" });
     topRef.current?.focus({ preventScroll: true });
   }, [phase]);
+
+  /**
+   * Saves the written answers that waited for review, as the student left
+   * them marked, and updates the saved attempt if any were re-marked.
+   */
+  async function flushReview(): Promise<void> {
+    const pending = pendingRef.current;
+    pendingRef.current = null;
+    if (!pending) return;
+    const marks = overridesRef.current;
+    const writes = pending.items.flatMap((item) => {
+      const correct = effectiveCorrect(item, marks);
+      // On a retake only misses count, as in the first save.
+      return pending.retake && correct ? [] : [{ cardId: item.cardId, correct }];
+    });
+    const remarked = pending.items.some((i) => effectiveCorrect(i, marks) !== i.correct);
+    if (writes.length === 0 && !remarked) return;
+    try {
+      const supabase = createClient();
+      const [results, update] = await Promise.all([
+        runLimited(writes, 4, (w) =>
+          recordAnswer(supabase, { cardId: w.cardId, setId, correct: w.correct, mode: "test", examDate }),
+        ),
+        remarked && pending.attemptId
+          ? supabase
+              .from("test_attempts")
+              .update({
+                score: pending.all.filter((i) => effectiveCorrect(i, marks)).length,
+                details: attemptDetails(pending.all, marks),
+              })
+              .eq("id", pending.attemptId)
+          : null,
+      ]);
+      if (results.some((r) => r === null) || update?.error) throw new Error("not saved");
+    } catch {
+      toast.error("Couldn't save your written answers", {
+        description: "Check your connection. Some cards may not have updated.",
+      });
+    }
+  }
+
+  // Leaving the page (another tab, closing it) still saves the written answers.
+  const onLeave = useEffectEvent(() => {
+    void flushReview();
+  });
+  useEffect(() => {
+    const handler = () => onLeave();
+    window.addEventListener("pagehide", handler);
+    return () => {
+      window.removeEventListener("pagehide", handler);
+      onLeave();
+    };
+  }, []);
 
   if (cards.length === 0) {
     return (
@@ -147,14 +241,43 @@ export function QuickTest({
     setResponses({});
     setGraded([]);
     setSaveState("idle");
+    setOverride(null);
+    setRetaken(false);
     setPhase("taking");
   };
 
   const retake = () => {
+    void flushReview();
     setResponses({});
     setGraded([]);
     setSaveState("idle");
+    setOverride(null);
+    setRetaken(true);
     setPhase("taking");
+  };
+
+  const newTest = () => {
+    void flushReview();
+    setPhase("setup");
+  };
+
+  /** Re-marks one written answer (`value` null clears the mark). With no key, clears every mark. */
+  function setOverride(questionKey: string | null, value: boolean | null = null) {
+    const next: Record<string, boolean> = questionKey === null ? {} : { ...overridesRef.current };
+    if (questionKey !== null) {
+      if (value === null) delete next[questionKey];
+      else next[questionKey] = value;
+    }
+    overridesRef.current = next;
+    setOverrides(next);
+  }
+
+  const studyMisses = async () => {
+    if (leaving) return;
+    setLeaving(true);
+    // Save first, so Learn opens with the misses already marked still learning.
+    await flushReview();
+    router.push(`/sets/${setId}/learn`);
   };
 
   const totalItems = questions.reduce((n, q) => n + itemCount(q), 0);
@@ -164,27 +287,39 @@ export function QuickTest({
     return n + q.items.filter((i) => Boolean(picks[i.cardId])).length;
   }, 0);
 
-  async function save(items: GradedItem[]) {
+  /**
+   * Saves the attempt and what each answer does to progress. Written
+   * answers the student may still re-mark wait in `pendingRef` until they
+   * leave the results.
+   */
+  async function save(items: GradedItem[], retake: boolean) {
     setSaveState("saving");
     let failed = false;
+    const pending: PendingReview = { items: items.filter(canOverride), all: items, retake, attemptId: null };
+    pendingRef.current = pending;
     try {
       const supabase = createClient();
       const score = items.filter((i) => i.correct).length;
-      const { error } = await supabase.from("test_attempts").insert({
-        set_id: setId,
-        kind: "cards",
-        score,
-        total: items.length,
-        details: items.map((i) => ({
-          cardId: i.cardId,
-          type: i.type,
-          correct: i.correct,
-          given: i.given.slice(0, 500),
-        })),
-      });
+      const { data, error } = await supabase
+        .from("test_attempts")
+        .insert({
+          set_id: setId,
+          kind: "cards",
+          score,
+          total: items.length,
+          details: attemptDetails(items, {}),
+        })
+        .select("id")
+        .maybeSingle();
       if (error) failed = true;
-      const results = await runLimited(items, 4, (i) =>
-        recordAnswer(supabase, { cardId: i.cardId, setId, correct: i.correct, mode: "test" }),
+      pending.attemptId = (data as { id?: string } | null)?.id ?? null;
+      const now = items.flatMap((item) => {
+        if (canOverride(item)) return [];
+        const mode = progressModeFor(item, retake);
+        return mode ? [{ item, mode }] : [];
+      });
+      const results = await runLimited(now, 4, ({ item, mode }) =>
+        recordAnswer(supabase, { cardId: item.cardId, setId, correct: item.correct, mode, examDate }),
       );
       if (results.some((r) => r === null)) failed = true;
     } catch {
@@ -200,11 +335,12 @@ export function QuickTest({
 
   const submit = () => {
     setConfirmOpen(false);
-    const items = gradeQuickTest(questions, responses);
+    const items = gradeQuickTest(questions, responses, cards);
     if (items.length === 0) return;
     setGraded(items);
+    setOverride(null);
     setPhase("results");
-    void save(items);
+    void save(items, retaken);
   };
 
   const trySubmit = () => {
@@ -220,8 +356,13 @@ export function QuickTest({
           questions={questions}
           graded={graded}
           saveState={saveState}
+          retake={retaken}
+          overrides={overrides}
+          onOverride={setOverride}
+          onStudyMisses={studyMisses}
+          leaving={leaving}
           onRetake={retake}
-          onNewTest={() => setPhase("setup")}
+          onNewTest={newTest}
         />
       </div>
     );
@@ -470,8 +611,8 @@ export function QuickTest({
 
 type ResponseValue = TestResponses[string];
 
-/** One question while taking the test (exported for previews). */
-export function QuestionBlock({
+/** One question while taking the test. */
+function QuestionBlock({
   question: q,
   number,
   value,

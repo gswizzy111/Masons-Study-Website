@@ -87,24 +87,28 @@ function toEntry(
   setStatus: SetStatus,
 ): GuideEntry {
   let status: GuideEntryStatus;
+  // A rebuild keeps a section's earlier text while it is rewritten.
+  const hasText = Boolean(section?.content_md.trim());
   if (!section) {
     status = setStatus === "building" ? "pending" : "missing";
-  } else if (section.status === "ready" && !section.content_md.trim()) {
+  } else if (section.status === "ready" && !hasText) {
     status = "missing";
   } else if ((section.status === "pending" || section.status === "writing") && setStatus !== "building") {
-    // The build stopped before this section was finished.
-    status = setStatus === "error" ? "error" : "missing";
+    // The build stopped before this section was rewritten: keep showing its
+    // earlier text if it has some.
+    status = hasText ? "ready" : setStatus === "error" ? "error" : "missing";
   } else {
     status = section.status;
   }
 
+  const showText = section && hasText && (status === "ready" || status === "pending" || status === "writing");
   return {
     id,
     number: 0,
     title,
     summary: summary?.trim() ? summary.trim() : null,
     status,
-    content: status === "ready" && section ? stripLeadingTitle(section.content_md, title) : "",
+    content: showText ? stripLeadingTitle(section.content_md, title) : "",
   };
 }
 

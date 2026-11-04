@@ -123,14 +123,21 @@ type State = {
   round: Round | null;
   roundsDone: number;
   feedback: SessionFeedback | null;
-  /** A written miss waits here until Continue (or "I was right"). */
-  pendingWrong: { cardId: string; mode: AnswerMode } | null;
+  /**
+   * A written answer that waits until Continue: a miss (until "I was
+   * right") or an answer accepted with a typo (until "I was wrong").
+   */
+  pending: PendingAnswer | null;
 };
+
+type PendingAnswer = { cardId: string; mode: AnswerMode; correct: boolean };
 
 type Ctx = {
   cards: readonly LearnCardRow[];
   byId: ReadonlyMap<string, LearnCardRow>;
   topicIds: ReadonlySet<string>;
+  /** The set's exam date: reviews are kept before it. */
+  examDate: string | null;
 };
 
 function levelOf(p: { level: number } | null | undefined): MasteryLevel {
@@ -157,11 +164,26 @@ function scopeCards(s: Pick<State, "options" | "reviewIds" | "progress" | "nowMs
   return cardsInScope(ctx.cards, s.progress, s.options, { topicIds: ctx.topicIds, now: new Date(s.nowMs) });
 }
 
+/**
+ * The highest level the chosen question types can reach: multiple choice
+ * alone stops at familiar, so familiar cards are done there.
+ */
+function levelGoal(options: Pick<LearnOptions, "types">): MasteryLevel {
+  return options.types === "mc" ? 2 : 3;
+}
+
 /** The cards a new round can pick from. Review: still due, or missed this session. */
 function roundCandidates(s: Pick<State, "options" | "reviewIds" | "progress" | "nowMs">, ctx: Ctx): LearnCardRow[] {
   const scope = scopeCards(s, ctx);
-  if (s.options.scope !== "review") return scope;
   const now = new Date(s.nowMs);
+  if (s.options.scope !== "review") {
+    if (levelGoal(s.options) === 3) return scope;
+    // Multiple choice only: a familiar card has nothing left to gain until it is due.
+    return scope.filter((c) => {
+      const p = s.progress.get(c.id);
+      return levelOf(p) < 2 || isDue(p, now);
+    });
+  }
   return scope.filter((c) => {
     const p = s.progress.get(c.id);
     return isDue(p, now) || p?.last_result === "wrong";
@@ -174,17 +196,18 @@ function withAnswer(
   correct: boolean,
   mode: AnswerMode,
   nowMs: number,
+  examDate: string | null,
 ): Map<string, LearnProgressRow> {
-  const next = applyAnswer(progress.get(cardId), correct, mode, new Date(nowMs));
+  const next = applyAnswer(progress.get(cardId), correct, mode, new Date(nowMs), { examDate });
   const map = new Map(progress);
   map.set(cardId, { ...next, card_id: cardId });
   return map;
 }
 
-type RoundBase = Omit<State, "phase" | "round" | "feedback" | "pendingWrong">;
+type RoundBase = Omit<State, "phase" | "round" | "feedback" | "pending">;
 
 function startRound(base: RoundBase, ctx: Ctx, rng: Rng, practice = false): State {
-  const empty = { round: null, feedback: null, pendingWrong: null };
+  const empty = { round: null, feedback: null, pending: null };
   const now = new Date(base.nowMs);
   const scope = scopeCards(base, ctx);
   if (scope.length === 0) {
@@ -226,13 +249,13 @@ function advance(s: State, ctx: Ctx, rng: Rng): State {
   const round = s.round;
   if (!round) return s;
   if (round.queue.length === 0) {
-    return { ...s, phase: "summary", feedback: null, pendingWrong: null, roundsDone: s.roundsDone + 1 };
+    return { ...s, phase: "summary", feedback: null, pending: null, roundsDone: s.roundsDone + 1 };
   }
   const [nextId, ...rest] = round.queue;
   const card = ctx.byId.get(nextId);
   if (!card) return advance({ ...s, round: { ...round, queue: rest } }, ctx, rng);
   const current = makeQuestion(card, s.progress, s.options, ctx.cards, { rng, now: new Date(s.nowMs) });
-  return { ...s, phase: "question", feedback: null, pendingWrong: null, round: { ...round, queue: rest, current } };
+  return { ...s, phase: "question", feedback: null, pending: null, round: { ...round, queue: rest, current } };
 }
 
 function modeFor(q: LearnQuestion, options: LearnOptions): AnswerMode {
@@ -249,12 +272,14 @@ function applyResult(
   mode: AnswerMode,
   nowMs: number,
   commitNow: boolean,
+  examDate: string | null,
 ): State {
   const round = s.round;
   if (!round || round.current.key !== q.key || s.phase !== "question") return s;
   const before = levelOf(s.progress.get(q.cardId));
-  const progress = commitNow ? withAnswer(s.progress, q.cardId, result.correct, mode, nowMs) : s.progress;
-  const after = levelOf(progress.get(q.cardId));
+  const projected = withAnswer(s.progress, q.cardId, result.correct, mode, nowMs, examDate);
+  const progress = commitNow ? projected : s.progress;
+  const after = levelOf(projected.get(q.cardId));
 
   const firstAttempt = !(q.cardId in round.firstTry);
   const firstTry = firstAttempt ? { ...round.firstTry, [q.cardId]: result.correct } : round.firstTry;
@@ -282,12 +307,12 @@ function applyResult(
     feedback: {
       ...result,
       questionKey: q.key,
-      mastered: commitNow && result.correct && before < 3 && after === 3,
+      mastered: result.correct && before < 3 && after === 3,
       comesBack,
       overridden: false,
       firstAttempt,
     },
-    pendingWrong: commitNow ? null : { cardId: q.cardId, mode },
+    pending: commitNow ? null : { cardId: q.cardId, mode, correct: result.correct },
   };
 }
 
@@ -324,6 +349,8 @@ type Props = {
   /** Seeds the first round so the server and browser render the same one. */
   seed: number;
   nowIso: string;
+  /** The set's exam date (YYYY-MM-DD), so reviews land before it. */
+  examDate?: string | null;
 };
 
 const ANSWER_FIELDS = [
@@ -355,6 +382,7 @@ export function LearnSession({
   aiReady,
   seed,
   nowIso,
+  examDate = null,
 }: Props) {
   const pathname = usePathname();
   const chat = useOptionalChat();
@@ -365,8 +393,9 @@ export function LearnSession({
       cards,
       byId: new Map(cards.map((c) => [c.id, c])),
       topicIds: new Set(topics.map((t) => t.id)),
+      examDate,
     }),
-    [cards, topics],
+    [cards, topics, examDate],
   );
 
   const [state, setState] = useState<State>(() => {
@@ -384,6 +413,7 @@ export function LearnSession({
       cards,
       byId: new Map(cards.map((c) => [c.id, c])),
       topicIds: new Set(topics.map((t) => t.id)),
+      examDate,
     };
     // A fresh seeded generator each call, so a double-invoked initializer
     // (Strict Mode) and the server render all build the same first round.
@@ -405,7 +435,7 @@ export function LearnSession({
     saveChain.current = saveChain.current.then(async () => {
       let saved: CardProgress | null = null;
       try {
-        saved = await recordAnswer(createClient(), { cardId, setId, correct, mode });
+        saved = await recordAnswer(createClient(), { cardId, setId, correct, mode, examDate });
       } catch {
         saved = null;
       }
@@ -435,7 +465,7 @@ export function LearnSession({
     const mode = modeFor(q, state.options);
     const nowMs = Date.now();
     if (!defer) save(q.cardId, result.correct, mode);
-    setState((s) => applyResult(s, q, result, mode, nowMs, !defer));
+    setState((s) => applyResult(s, q, result, mode, nowMs, !defer, examDate));
   }
 
   function choose(index: number) {
@@ -454,7 +484,11 @@ export function LearnSession({
   function submitWritten(text: string) {
     const q = state.round?.current;
     if (!q || q.kind !== "written") return;
-    const grade = gradeAnswer(text, q.answer);
+    // The other cards' answers: typing one of those is a mix-up, not a typo.
+    const side = q.promptSide === "definition" ? "term" : "definition";
+    const others = ctx.cards.filter((c) => c.id !== q.cardId).map((c) => (side === "term" ? c.term : c.definition));
+    const grade = gradeAnswer(text, q.answer, { others, side });
+    const typo = grade.correct && grade.similarity < 1;
     answer(
       q,
       {
@@ -462,10 +496,11 @@ export function LearnSession({
         given: text.trim(),
         chosenIndex: null,
         close: grade.close,
-        typo: grade.correct && grade.similarity < 1,
+        typo,
         dontKnow: false,
       },
-      !grade.correct,
+      // A miss waits for "I was right", a typo for "I was wrong".
+      !grade.correct || typo,
     );
   }
 
@@ -480,40 +515,39 @@ export function LearnSession({
     if (state.phase !== "feedback" || !fb) return;
     if (continuedKey.current === fb.questionKey) return;
     continuedKey.current = fb.questionKey;
-    const pending = state.pendingWrong;
+    const pending = state.pending;
     const nowMs = Date.now();
-    if (pending) save(pending.cardId, false, pending.mode);
+    if (pending) save(pending.cardId, pending.correct, pending.mode);
     setState((s) => {
       if (s.phase !== "feedback" || s.feedback?.questionKey !== fb.questionKey) return s;
-      const committed = s.pendingWrong
-        ? {
-            ...s,
-            nowMs,
-            progress: withAnswer(s.progress, s.pendingWrong.cardId, false, s.pendingWrong.mode, nowMs),
-          }
+      const p = s.pending;
+      const committed = p
+        ? { ...s, nowMs, progress: withAnswer(s.progress, p.cardId, p.correct, p.mode, nowMs, examDate) }
         : { ...s, nowMs };
       return advance(committed, ctx, rng);
     });
   }
 
+  /** "I was right" on a written miss: it counts as correct. */
   function overrideCorrect() {
     const fb = state.feedback;
-    const pending = state.pendingWrong;
-    if (state.phase !== "feedback" || !fb || !pending) return;
+    const pending = state.pending;
+    if (state.phase !== "feedback" || !fb || !pending || pending.correct) return;
     if (continuedKey.current === fb.questionKey) return;
     continuedKey.current = fb.questionKey;
     const nowMs = Date.now();
     save(pending.cardId, true, pending.mode);
     setState((s) => {
       const round = s.round;
-      if (!round || s.phase !== "feedback" || s.feedback?.questionKey !== fb.questionKey || !s.pendingWrong) return s;
-      const cardId = s.pendingWrong.cardId;
+      const p = s.pending;
+      if (!round || s.phase !== "feedback" || s.feedback?.questionKey !== fb.questionKey || !p || p.correct) return s;
+      const cardId = p.cardId;
       const used = round.retries[cardId] ?? 0;
       const fixed: State = {
         ...s,
         nowMs,
-        progress: withAnswer(s.progress, cardId, true, s.pendingWrong.mode, nowMs),
-        pendingWrong: null,
+        progress: withAnswer(s.progress, cardId, true, p.mode, nowMs, examDate),
+        pending: null,
         round: {
           ...round,
           queue: fb.comesBack ? round.queue.filter((id) => id !== cardId) : round.queue,
@@ -526,10 +560,44 @@ export function LearnSession({
     });
   }
 
-  /** Saves a written miss that is still waiting (before leaving the round). */
+  /** "I was wrong" on an answer accepted with a typo: it counts as a miss and comes back. */
+  function overrideWrong() {
+    const fb = state.feedback;
+    const pending = state.pending;
+    if (state.phase !== "feedback" || !fb || !pending || !pending.correct) return;
+    if (continuedKey.current === fb.questionKey) return;
+    continuedKey.current = fb.questionKey;
+    const nowMs = Date.now();
+    save(pending.cardId, false, pending.mode);
+    setState((s) => {
+      const round = s.round;
+      const p = s.pending;
+      if (!round || s.phase !== "feedback" || s.feedback?.questionKey !== fb.questionKey || !p || !p.correct) return s;
+      const cardId = p.cardId;
+      const used = round.retries[cardId] ?? 0;
+      const again = used < MAX_RETRIES_PER_ROUND;
+      const done = round.done.filter((id) => id !== cardId);
+      const fixed: State = {
+        ...s,
+        nowMs,
+        progress: withAnswer(s.progress, cardId, false, p.mode, nowMs, examDate),
+        pending: null,
+        round: {
+          ...round,
+          queue: again ? requeue(round.queue, cardId) : round.queue,
+          retries: again ? { ...round.retries, [cardId]: used + 1 } : round.retries,
+          firstTry: fb.firstAttempt ? { ...round.firstTry, [cardId]: false } : round.firstTry,
+          done: again ? done : [...done, cardId],
+        },
+      };
+      return advance(fixed, ctx, rng);
+    });
+  }
+
+  /** Saves a written answer that is still waiting (before leaving the round). */
   function flushPending() {
-    const pending = state.pendingWrong;
-    if (pending) save(pending.cardId, false, pending.mode);
+    const pending = state.pending;
+    if (pending) save(pending.cardId, pending.correct, pending.mode);
     return pending;
   }
 
@@ -539,7 +607,9 @@ export function LearnSession({
     answeredKey.current = null;
     continuedKey.current = null;
     setState((s) => {
-      const progress = pending ? withAnswer(s.progress, pending.cardId, false, pending.mode, nowMs) : s.progress;
+      const progress = pending
+        ? withAnswer(s.progress, pending.cardId, pending.correct, pending.mode, nowMs, examDate)
+        : s.progress;
       const now = new Date(nowMs);
       const sameReview = options.scope === "review" && s.options.scope === "review" && s.reviewIds;
       return startRound(
@@ -617,11 +687,13 @@ export function LearnSession({
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  // Move on by itself after a correct answer (if turned on).
+  // Move on by itself after a correct answer (if turned on). Not after a
+  // typo: the right spelling and "I was wrong" stay up until Continue.
   const onAutoAdvance = useEffectEvent(() => {
-    if (state.phase === "feedback" && state.feedback?.correct) continueNext();
+    if (state.phase === "feedback" && state.feedback?.correct && !state.feedback.typo) continueNext();
   });
-  const feedbackForTimer = state.phase === "feedback" && state.feedback?.correct ? state.feedback : null;
+  const feedbackForTimer =
+    state.phase === "feedback" && state.feedback?.correct && !state.feedback.typo ? state.feedback : null;
   useEffect(() => {
     if (!feedbackForTimer || !autoAdvance) return;
     const timer = window.setTimeout(() => onAutoAdvance(), AUTO_ADVANCE_MS);
@@ -734,9 +806,15 @@ export function LearnSession({
   } else if (state.phase === "finished") {
     const isReview = state.options.scope === "review";
     const due = isReview ? nextReviewDue(ctx.cards, state.progress) : nextReviewDue(scope, state.progress);
+    // Multiple choice only stops at familiar: say so, and offer written answers.
+    const familiarOnly =
+      !isReview && levelGoal(state.options) < 3 && scope.some((c) => levelOf(state.progress.get(c.id)) < 3);
     body = (
       <LearnFinished
-        kind={isReview ? "review" : "mastered"}
+        kind={isReview ? "review" : familiarOnly ? "familiar" : "mastered"}
+        onSwitchToWritten={
+          familiarOnly ? () => changeOptions({ ...state.options, types: "written" }) : null
+        }
         nextDueText={due ? formatRelative(due, now) : null}
         nextDueTitle={
           due
@@ -774,9 +852,10 @@ export function LearnSession({
         },
       ];
     });
+    const goal = levelGoal(state.options);
     const hasMore = roundCandidates(state, ctx).some((c) => {
       const p = state.progress.get(c.id);
-      return levelOf(p) < 3 || isDue(p, now);
+      return levelOf(p) < goal || isDue(p, now);
     });
     bodyKey = `summary-${round.number}`;
     body = (
@@ -802,6 +881,7 @@ export function LearnSession({
         onDontKnow={dontKnow}
         onContinue={continueNext}
         onOverride={overrideCorrect}
+        onOverrideWrong={overrideWrong}
         onExplain={chat ? explain : null}
       />
     );
@@ -831,14 +911,24 @@ export function LearnSession({
         />
       </div>
 
-      <div className="mt-5 rounded-lg border border-line bg-surface px-4 py-3.5 sm:px-5 sm:py-4">
-        <div className="mb-2.5 flex items-baseline justify-between gap-3">
-          <p className="text-sm font-medium text-ink">Your progress</p>
-          <p className="text-sm text-ink-2">
+      <div className="mt-5 rounded-lg border border-line bg-surface px-4 py-3 sm:px-5 sm:py-4">
+        {/* Phones: one line, so the question and its choices fit on the first screen. */}
+        <div className="flex items-center gap-3 sm:hidden">
+          <p className="shrink-0 text-sm font-medium text-ink">Your progress</p>
+          <MasteryBar summary={summary} size="md" showLegend={false} label="Your progress" className="min-w-0 flex-1" />
+          <p className="shrink-0 text-sm text-ink-2">
             <span className="font-mono font-medium text-ink tabular-nums">{summary.percent}%</span> mastered
           </p>
         </div>
-        <MasteryBar summary={summary} size="md" />
+        <div className="max-sm:hidden">
+          <div className="mb-2.5 flex items-baseline justify-between gap-3">
+            <p className="text-sm font-medium text-ink">Your progress</p>
+            <p className="text-sm text-ink-2">
+              <span className="font-mono font-medium text-ink tabular-nums">{summary.percent}%</span> mastered
+            </p>
+          </div>
+          <MasteryBar summary={summary} size="md" />
+        </div>
       </div>
 
       {inRound && round ? (

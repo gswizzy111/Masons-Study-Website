@@ -107,7 +107,20 @@ read; only the service role updates), `exam_questions`, `test_attempts`,
 Storage: private bucket `materials`, object path
 `<user_id>/<set_id>/<uuid>-<safe file name>`, 50 MB per file. The browser
 uploads directly to Storage (never through a route handler: Netlify caps
-request bodies at 6 MB).
+request bodies at 6 MB). `materials.storage_path` must have exactly that
+shape for the row's own user and set (CHECK `materials_storage_path_owned`,
+and `isOwnStoragePath()` in `lib/extract/index.ts` before the service-role
+download). A `ready` material's `error` holds a note about parts that
+couldn't be read (picture pages, a long scan read only in part).
+
+Server guards (`20261104000002_server_guards.sql`): `ai_usage` and
+`take_ai_quota(kind, cost)` (per-user hourly and daily limits for chat,
+builds, exam questions and video searches; read through
+`lib/usage-limits.ts`, 429 when reached), and a BEFORE INSERT trigger on
+`jobs` that keeps only the public options (`regenerate`, `count`,
+`topicIds`, `difficulty`), resets the bookkeeping columns, and counts the
+job toward the limits (raises `PT429`). Internal options (`continue_from`,
+`continuations`, carried totals) are written only by the runner.
 
 ## 5. Shared modules (contracts)
 
@@ -124,7 +137,12 @@ with the final signature and the named builder replaces the body.
 - `lib/supabase/client.ts`: `createClient()` browser client (singleton OK).
 - `lib/supabase/server.ts`: `async createClient()`; `async getUser()` → `User | null`;
   `async requireUser()` → `{ supabase, user }`, redirects to `/login?next=<path>`
-  when signed out.
+  when signed out. Re-exports `safeNextPath` from `lib/safe-next.ts` (no
+  Next imports; also used by `proxy.ts`): the one check for redirect targets
+  (refuses control characters, backslashes, and anything that resolves to
+  another origin).
+- `lib/usage-limits.ts`: `takeQuota(supabase, kind, cost?)` →
+  `{ ok: true } | { ok: false, status: 429 | 503, message }`; `limitMessage()`.
 - `lib/supabase/admin.ts`: `createAdminClient()` service-role client (relative
   imports, no `server-only`).
 - `proxy.ts` (root): refreshes the Supabase session cookie on every request
@@ -154,8 +172,12 @@ with the final signature and the named builder replaces the body.
 - `lib/ai/set-context.ts`: `loadSetContext(supabase, setId, opts?: { includeGuide?: boolean; maxChars?: number })`
   → `{ title, topics, text, truncated, charCount }`. Builds one text block
   (materials' `content_text` with `<material name="...">` wrappers, then the
-  guide sections if `includeGuide`). Default `maxChars` 600000; if cut, sets
-  `truncated: true` (callers must surface that, never hide it).
+  guide sections if `includeGuide`: every section with text, including ones
+  being rewritten). Default `maxChars` 600000; if cut, sets
+  `truncated: true` (callers must surface that, never hide it). Topics come
+  through `sanitizeTopics()` (at most 12, titles 200 and summaries 600
+  characters), since users can write `study_sets.topics` directly; every
+  prompt reads topics that way (`loadSet()` in the job runner too).
 - `lib/jobs/start-job.ts` (client): `startJob(setId, kind, options?)` →
   `Promise<string>` job id; POSTs `/api/jobs`, throws `Error(message)` on failure.
 - `lib/jobs/use-job.ts` (client hook): `useJob(jobId: string | null)` →
@@ -169,7 +191,7 @@ with the final signature and the named builder replaces the body.
 - Stubs F2 writes for builders to replace:
   - `components/chat/chat-panel.tsx`: `export function ChatPanel(props: { setId: string; setTitle: string; className?: string })` [B7 chat]
   - `components/jobs/job-progress.tsx`: `export function JobProgress(props: { job: Job | null; onRetry?: () => void; className?: string })` [B2 sets]
-  - `lib/learn/progress.ts`: `export async function recordAnswer(supabase: SupabaseClient, input: { cardId: string; setId: string; correct: boolean; mode: AnswerMode }): Promise<CardProgress | null>`, `export type AnswerMode = 'mc' | 'written' | 'flashcard' | 'test' | 'review'` [B4 learn]
+  - `lib/learn/progress.ts`: `export async function recordAnswer(supabase: SupabaseClient, input: { cardId: string; setId: string; correct: boolean; mode: AnswerMode; examDate?: string | null }): Promise<CardProgress | null>` (without `examDate` it reads `study_sets.exam_date`; reviews before an exam land before it), `export type AnswerMode = 'mc' | 'written' | 'flashcard' | 'test' | 'review'` [B4 learn]
 - `netlify.toml`, `.env.example`, `next.config.ts` upkeep.
 
 ### Design system [F1: design]
@@ -231,7 +253,7 @@ work):
 | `--accent-soft` | `#E1F0EC` | `#12332D` |
 | `--learning` | `#A86200` | `#E3A33A` |
 | `--learning-soft` | `#FBEFD9` | `#3A2A0F` |
-| `--not-studied` | `#9AA0A8` | `#5E656E` |
+| `--not-studied` | `#868C95` | `#6A727C` |
 | `--mastered` | = accent | = accent |
 | `--danger` | `#B42318` | `#F07167` |
 | `--danger-soft` | `#FDECEA` | `#3A1614` |
@@ -286,7 +308,7 @@ skill's pre-flight checklist and `emil-design-eng` for polish if time allows.
 ## 8. Jobs
 
 `POST /api/jobs` `{ setId, kind: 'build_set' | 'exam_questions', options? }` →
-`201 { jobId }`. Checks the user owns the set, refuses a second
+`201 { jobId }` (`503 { code: 'not_configured' }` without `ANTHROPIC_API_KEY`). Checks the user owns the set, refuses a second
 queued/running job of the same kind for the set (returns the existing id),
 inserts the row with the user's client, then `triggerJob(jobId, origin)`.
 
@@ -302,11 +324,21 @@ reports `progress` 0-100 and a human `message` as it goes, and ends `done` or
 `error` (with a readable `error`). `POST /api/jobs/[jobId]/retry` re-queues an
 errored job, or a running one with no update for 15+ minutes.
 
-`build_set` (options `{ regenerate?: boolean }`):
+`build_set` (options `{ regenerate?: boolean }`). A rebuild never blanks
+the guide: each section keeps its previous text while it is rewritten
+(status `pending`/`writing` with `content_md` still set; the guide UI should
+keep showing it), a section that can't be rewritten keeps its text and goes
+back to `ready`, and sections of topics the new outline dropped are deleted
+only when the build finishes. Extraction stops starting files at the soft
+deadline and continues in a fresh run (`continue_from: 'extract'`).
 1. Extract every `pending`/`error` material (status `processing` → `ready` or
    `error`). PDF via `unpdf`, DOCX via `mammoth`, PPTX via `jszip` (slide text
    + speaker notes in slide order), TXT/MD directly, images and scanned PDFs
    (under ~100 chars of text per page) via Claude vision transcription.
+   Picture pages inside a typed PDF (an image and under 100 characters) are
+   transcribed too and replace those pages' text; long scans are read 25
+   pages per call; big photos are shrunk with `sharp` when it loads. Only
+   `<user_id>/<set_id>/...` paths of the job's own set are downloaded.
 2. Load the learning profile and all ready material text (`loadSetContext`).
    Fail with a clear error if there is no usable text.
 3. Outline call (structured): 3-12 topics `{ id: 't1'..., title, summary }`

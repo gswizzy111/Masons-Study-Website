@@ -174,6 +174,9 @@ enable_refresh_token_rotation = true
 # Requires enable_refresh_token_rotation = true.
 refresh_token_reuse_interval = 10
 # Allow/disallow new user signups to your project. Existing users can still sign in.
+# Open locally so you can sign up while developing. On the hosted project,
+# turn sign-ups off once the student's account exists (see README,
+# "Lock it down"): anyone who can sign up can use the site's Claude key.
 enable_signup = true
 # Allow/disallow anonymous sign-ins to your project.
 enable_anonymous_sign_ins = false
@@ -244,6 +247,17 @@ otp_expiry = 3600
 # pass = "env(SENDGRID_API_KEY)"
 # admin_email = "admin@email.com"
 # sender_name = "Admin"
+
+# Email links that work on any device: they carry a token_hash that
+# /auth/confirm verifies, so they don't depend on the browser that asked.
+# Paste the same templates into the hosted project (see README).
+[auth.email.template.confirmation]
+subject = "Confirm your email for Mason's Study"
+content_path = "./supabase/templates/confirmation.html"
+
+[auth.email.template.recovery]
+subject = "Reset your Mason's Study password"
+content_path = "./supabase/templates/recovery.html"
 
 # Uncomment to customize email template
 # [auth.email.template.invite]

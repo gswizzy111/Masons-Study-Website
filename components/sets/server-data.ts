@@ -58,6 +58,50 @@ export const getSet = cache(async (setId: string): Promise<SetWithCourse | null>
   return { ...row, topics: Array.isArray(row.topics) ? row.topics : [], course };
 });
 
+export type GuideState = {
+  /** Guide sections that have text (ready, or being rewritten with their earlier text). */
+  writtenSections: number;
+  /** Sections a build couldn't write (status 'error', no text). */
+  failedSections: number;
+  /** Materials that were read and can be studied from. */
+  readyMaterials: number;
+};
+
+/**
+ * What the set's guide and material look like right now, for build and
+ * tutor wording: whether a guide exists (a later build updates it), which
+ * sections failed, and whether Claude has any material to read. Never
+ * throws: on a read error it reports nothing written, which only changes
+ * wording. Deduplicated per request (the set layout and overview share it).
+ */
+export const getGuideState = cache(async (setId: string): Promise<GuideState> => {
+  const empty: GuideState = { writtenSections: 0, failedSections: 0, readyMaterials: 0 };
+  if (!isUuid(setId)) return empty;
+  const supabase = await createClient();
+  const [written, failed, materials] = await Promise.all([
+    supabase
+      .from("guide_sections")
+      .select("id", { count: "exact", head: true })
+      .eq("set_id", setId)
+      .neq("content_md", ""),
+    supabase
+      .from("guide_sections")
+      .select("id", { count: "exact", head: true })
+      .eq("set_id", setId)
+      .eq("status", "error"),
+    supabase
+      .from("materials")
+      .select("id", { count: "exact", head: true })
+      .eq("set_id", setId)
+      .eq("status", "ready"),
+  ]);
+  return {
+    writtenSections: written.error ? 0 : (written.count ?? 0),
+    failedSections: failed.error ? 0 : (failed.count ?? 0),
+    readyMaterials: materials.error ? 0 : (materials.count ?? 0),
+  };
+});
+
 /** The user's courses, by name. */
 export async function getCourses(supabase: SupabaseClient): Promise<CourseLite[]> {
   const { data, error } = await supabase

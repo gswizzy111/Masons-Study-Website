@@ -89,9 +89,29 @@ function Notice({
   );
 }
 
-function Notices({ snapshot, store }: { snapshot: ChatSnapshot; store: ChatStore }) {
+function Notices({
+  snapshot,
+  store,
+  aiReady,
+  emptyShown,
+}: {
+  snapshot: ChatSnapshot;
+  store: ChatStore;
+  aiReady: boolean;
+  /** The empty state is showing (it carries the not-connected message itself). */
+  emptyShown: boolean;
+}) {
   const notices: ReactNode[] = [];
-  if (snapshot.notConfigured) {
+  if (!aiReady) {
+    if (!emptyShown) {
+      notices.push(
+        <Notice key="config" tone="neutral" icon={<PlugZap strokeWidth={1.75} aria-hidden />}>
+          <strong className="font-semibold text-ink">Claude is not connected yet.</strong> Add
+          ANTHROPIC_API_KEY to the site&apos;s settings to turn on the tutor.
+        </Notice>,
+      );
+    }
+  } else if (snapshot.notConfigured) {
     notices.push(
       <Notice key="config" tone="neutral" icon={<PlugZap strokeWidth={1.75} aria-hidden />}>
         <strong className="font-semibold text-ink">Claude is not connected yet.</strong> Add
@@ -138,15 +158,51 @@ function Notices({ snapshot, store }: { snapshot: ChatSnapshot; store: ChatStore
   return <div className="flex shrink-0 flex-col gap-2 px-3 pt-1 pb-2.5 sm:px-4">{notices}</div>;
 }
 
+/**
+ * What the tutor can draw on for this set: the written study guide and the
+ * material, the material only (no guide yet), or nothing yet.
+ */
+export type ChatGrounding = "guide" | "material" | "none";
+
+const GROUNDING_TEXT: Record<ChatGrounding, string> = {
+  guide:
+    "Claude has your material and study guide for this set, and explains things the way your learning profile says.",
+  material:
+    "Claude has your material for this set, and explains things the way your learning profile says.",
+  none: "Claude hasn't read any material for this set yet, so it answers from general knowledge, the way your learning profile says.",
+};
+
 function EmptyChat({
   setTitle,
   onPick,
   disabled,
+  aiReady,
+  grounding,
 }: {
   setTitle: string;
   onPick: (text: string) => void;
   disabled: boolean;
+  aiReady: boolean;
+  grounding: ChatGrounding;
 }) {
+  if (!aiReady) {
+    return (
+      <div className="flex flex-col gap-2 px-1 pt-2 pb-4">
+        <span className="inline-flex size-10 items-center justify-center rounded-full bg-surface-2 text-ink-2">
+          <PlugZap className="size-5" strokeWidth={1.75} aria-hidden />
+        </span>
+        <h3 className="font-display text-xl leading-snug font-semibold tracking-[-0.01em] text-ink">
+          Claude is not connected yet
+        </h3>
+        <p className="text-[0.9375rem] leading-relaxed text-ink-2">
+          Add ANTHROPIC_API_KEY to the site&apos;s settings to turn on the tutor. Then you can ask
+          anything about {setTitle ? <span className="break-words">{setTitle}</span> : "this set"}{" "}
+          here.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-5 px-1 pt-2 pb-4">
       <div className="flex flex-col gap-2">
@@ -157,8 +213,7 @@ function EmptyChat({
           Ask anything about {setTitle ? <span className="break-words">{setTitle}</span> : "this set"}
         </h3>
         <p className="text-[0.9375rem] leading-relaxed text-ink-2">
-          Claude has your material and study guide for this set, and explains things the way your
-          learning profile says. Start with one of these or type your own question.
+          {GROUNDING_TEXT[grounding]} Start with one of these or type your own question.
         </p>
       </div>
       <ul className="flex flex-col gap-2" aria-label="Suggested questions">
@@ -280,8 +335,19 @@ function ClearChatDialog({
  * full-screen sheet on phones. The conversation lives in a per-set store, so
  * closing and reopening the panel keeps it, including an answer in progress.
  */
-export function ChatPanel(props: { setId: string; setTitle: string; className?: string }) {
-  const { setId, setTitle, className } = props;
+export function ChatPanel(props: {
+  setId: string;
+  setTitle: string;
+  className?: string;
+  /**
+   * Claude is configured on this site (aiConfigured() on the server). When
+   * false the panel says so up front and the question box is off. Default true.
+   */
+  aiReady?: boolean;
+  /** What the tutor can draw on, for the empty-state wording. Default "material". */
+  grounding?: ChatGrounding;
+}) {
+  const { setId, setTitle, className, aiReady = true, grounding = "material" } = props;
   const chat = useOptionalChat();
   const { store, snapshot } = useChatStore(setId);
   const titleId = useId();
@@ -306,8 +372,11 @@ export function ChatPanel(props: { setId: string; setTitle: string; className?: 
   useEffect(() => {
     if (!takePendingQuestion) return;
     const question = takePendingQuestion();
-    if (question) store.send(question);
-  }, [pendingQuestion, takePendingQuestion, store]);
+    if (!question) return;
+    // Without Claude the request would only fail: keep the question in the box.
+    if (aiReady) store.send(question);
+    else store.setDraft(question);
+  }, [pendingQuestion, takePendingQuestion, store, aiReady]);
 
   // Put the cursor in the box on open, except on touch screens (where it
   // would pop the keyboard over the conversation).
@@ -465,7 +534,15 @@ export function ChatPanel(props: { setId: string; setTitle: string; className?: 
               </div>
             ) : null}
 
-            {showEmpty ? <EmptyChat setTitle={setTitle} onPick={pick} disabled={busy} /> : null}
+            {showEmpty ? (
+              <EmptyChat
+                setTitle={setTitle}
+                onPick={pick}
+                disabled={busy || !aiReady}
+                aiReady={aiReady}
+                grounding={grounding}
+              />
+            ) : null}
 
             {items.length > 0 ? (
               <ol className="flex flex-col gap-5" aria-label="Conversation">
@@ -475,7 +552,7 @@ export function ChatPanel(props: { setId: string; setTitle: string; className?: 
                     item={item}
                     waiting={item === lastItem && waiting}
                     onRetry={store.retry}
-                    retryDisabled={busy}
+                    retryDisabled={busy || !aiReady}
                   />
                 ))}
               </ol>
@@ -501,7 +578,7 @@ export function ChatPanel(props: { setId: string; setTitle: string; className?: 
         ) : null}
       </div>
 
-      <Notices snapshot={snapshot} store={store} />
+      <Notices snapshot={snapshot} store={store} aiReady={aiReady} emptyShown={showEmpty} />
 
       <ChatComposer
         value={snapshot.draft}
@@ -509,6 +586,7 @@ export function ChatPanel(props: { setId: string; setTitle: string; className?: 
         onSend={send}
         onStop={store.stop}
         busy={busy}
+        disabled={!aiReady}
         textareaRef={textareaRef}
       />
 

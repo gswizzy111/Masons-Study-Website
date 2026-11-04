@@ -8,6 +8,7 @@ import {
   CircleCheck,
   ClipboardCheck,
   CornerDownLeft,
+  PencilLine,
   Repeat,
   Trophy,
 } from "lucide-react";
@@ -167,15 +168,21 @@ export function LearnFinished({
   scopeTotal,
   onPractice,
   onStudyAll,
+  onSwitchToWritten = null,
   testHref,
 }: {
-  /** "review": nothing due. "mastered": everything in scope is mastered. */
-  kind: "review" | "mastered";
+  /**
+   * "review": nothing due. "mastered": everything in scope is mastered.
+   * "familiar": multiple choice only, and every card is as far as it can take it.
+   */
+  kind: "review" | "mastered" | "familiar";
   nextDueText: string | null;
   nextDueTitle: string | null;
   scopeTotal: number;
   onPractice: (() => void) | null;
   onStudyAll: (() => void) | null;
+  /** "familiar": switch Learn to written answers. */
+  onSwitchToWritten?: (() => void) | null;
   testHref: string;
 }) {
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -192,7 +199,7 @@ export function LearnFinished({
         aria-hidden
         className="grid size-14 place-items-center rounded-full bg-accent-soft text-accent-strong motion-safe:animate-pop-in"
       >
-        {kind === "review" ? (
+        {kind !== "mastered" ? (
           <CircleCheck className="size-7" strokeWidth={1.75} />
         ) : (
           <Trophy className="size-7" strokeWidth={1.75} />
@@ -204,14 +211,20 @@ export function LearnFinished({
         tabIndex={-1}
         className="mt-5 font-display text-2xl leading-tight font-semibold tracking-[-0.015em] text-ink outline-none sm:text-[1.75rem]"
       >
-        {kind === "review" ? "All caught up" : "Everything here is mastered"}
+        {kind === "review"
+          ? "All caught up"
+          : kind === "familiar"
+            ? "Everything here is familiar"
+            : "Everything here is mastered"}
       </h3>
       <p className="mt-2 max-w-[46ch] text-[0.9375rem] leading-relaxed text-ink-2">
         {kind === "review"
           ? "Nothing is due for review right now."
-          : `${pluralize(scopeTotal, "card")} mastered. Spaced reviews bring each one back before you forget it.`}
+          : kind === "familiar"
+            ? "Multiple choice takes cards as far as familiar. Type the answers to master them."
+            : `${pluralize(scopeTotal, "card")} mastered. Spaced reviews bring each one back before you forget it.`}
       </p>
-      {nextDueText ? (
+      {nextDueText && kind !== "familiar" ? (
         <p className="mt-4 inline-flex items-center gap-2 rounded-full border border-line bg-surface-2/60 px-3.5 py-1.5 text-sm text-ink">
           <CalendarClock className="size-4 text-ink-2" strokeWidth={1.75} aria-hidden />
           <span title={nextDueTitle ?? undefined}>Next review due {nextDueText}</span>
@@ -219,14 +232,20 @@ export function LearnFinished({
       ) : null}
 
       <div className="mt-7 flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:justify-center">
+        {onSwitchToWritten ? (
+          <Button onClick={onSwitchToWritten}>
+            <PencilLine strokeWidth={1.75} aria-hidden />
+            Switch to written answers
+          </Button>
+        ) : null}
         {onPractice ? (
-          <Button onClick={onPractice}>
+          <Button variant={onSwitchToWritten ? "outline" : "primary"} onClick={onPractice}>
             <Repeat strokeWidth={1.75} aria-hidden />
             Practice anyway
           </Button>
         ) : null}
         {onStudyAll ? (
-          <Button variant={onPractice ? "outline" : "primary"} onClick={onStudyAll}>
+          <Button variant={onPractice || onSwitchToWritten ? "outline" : "primary"} onClick={onStudyAll}>
             Study all cards
           </Button>
         ) : null}

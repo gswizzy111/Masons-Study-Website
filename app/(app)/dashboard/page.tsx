@@ -250,7 +250,7 @@ function DuePanel({
         </div>
         <span
           aria-hidden
-          className="grid size-10 shrink-0 place-items-center rounded-md bg-learning-soft text-learning-strong"
+          className="grid size-10 shrink-0 place-items-center rounded-md bg-surface-2 text-ink-2"
         >
           <RotateCcw className="size-5" strokeWidth={1.75} />
         </span>

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { aiConfigured } from "@/lib/env";
 import { requireUser } from "@/lib/supabase/server";
 import { PageContainer, PageHeader } from "@/components/app-shell";
 import { NewSetForm } from "@/components/sets/new-set-form";
@@ -16,7 +17,7 @@ export default async function NewSetPage() {
         title="New study set"
         description="Name it, add your material, and Claude builds a study guide and flashcards around how you learn."
       />
-      <NewSetForm courses={courses} userId={user.id} />
+      <NewSetForm courses={courses} userId={user.id} aiReady={aiConfigured()} />
     </PageContainer>
   );
 }

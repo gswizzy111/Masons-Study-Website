@@ -27,6 +27,12 @@ export type ChatContextValue = {
   pendingQuestion: string | null;
   /** Returns the queued question and clears it, so it is sent exactly once. */
   takePendingQuestion: () => string | null;
+  /**
+   * The element that had focus when the panel last opened (the button that
+   * opened it), handed out once so closing the panel can put focus back.
+   * Null when nothing was focused (e.g. Safari doesn't focus clicked buttons).
+   */
+  takeOpener: () => HTMLElement | null;
 };
 
 const ChatContext = createContext<ChatContextValue | null>(null);
@@ -37,6 +43,9 @@ export function ChatProvider({ setId, children }: { setId: string; children: Rea
   // The ref makes takePendingQuestion() hand a question out only once, even
   // if effects run twice (Strict Mode) before the state update lands.
   const pendingRef = useRef<{ setId: string; question: string } | null>(null);
+  // Mirrors isOpen for the callbacks below, and remembers who opened the panel.
+  const isOpenRef = useRef(false);
+  const openerRef = useRef<HTMLElement | null>(null);
 
   // A different set: drop anything queued for the previous one.
   const [currentSetId, setCurrentSetId] = useState(setId);
@@ -45,17 +54,34 @@ export function ChatProvider({ setId, children }: { setId: string; children: Rea
     setPendingQuestion(null);
   }
 
-  const open = useCallback(() => setIsOpen(true), []);
-  const close = useCallback(() => setIsOpen(false), []);
-  const toggle = useCallback(() => setIsOpen((v) => !v), []);
+  // Called from event handlers before the panel opens, while focus is still
+  // on the button that was used.
+  const setOpen = useCallback((next: boolean) => {
+    if (next && !isOpenRef.current) {
+      const active = document.activeElement;
+      openerRef.current = active instanceof HTMLElement && active !== document.body ? active : null;
+    }
+    isOpenRef.current = next;
+    setIsOpen(next);
+  }, []);
+
+  const open = useCallback(() => setOpen(true), [setOpen]);
+  const close = useCallback(() => setOpen(false), [setOpen]);
+  const toggle = useCallback(() => setOpen(!isOpenRef.current), [setOpen]);
+
+  const takeOpener = useCallback(() => {
+    const opener = openerRef.current;
+    openerRef.current = null;
+    return opener;
+  }, []);
 
   const ask = useCallback((text: string) => {
     const question = text.trim();
-    setIsOpen(true);
+    setOpen(true);
     if (!question) return;
     pendingRef.current = { setId, question };
     setPendingQuestion(question);
-  }, [setId]);
+  }, [setId, setOpen]);
 
   const takePendingQuestion = useCallback(() => {
     const pending = pendingRef.current;
@@ -67,8 +93,8 @@ export function ChatProvider({ setId, children }: { setId: string; children: Rea
   }, [setId]);
 
   const value = useMemo<ChatContextValue>(
-    () => ({ setId, isOpen, open, close, toggle, ask, pendingQuestion, takePendingQuestion }),
-    [setId, isOpen, open, close, toggle, ask, pendingQuestion, takePendingQuestion],
+    () => ({ setId, isOpen, open, close, toggle, ask, pendingQuestion, takePendingQuestion, takeOpener }),
+    [setId, isOpen, open, close, toggle, ask, pendingQuestion, takePendingQuestion, takeOpener],
   );
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;

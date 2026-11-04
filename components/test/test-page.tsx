@@ -27,6 +27,7 @@ export function TestPage({
   attempts,
   initialTab,
   aiReady,
+  examDate = null,
 }: {
   setId: string;
   setStatus: SetStatus;
@@ -36,6 +37,8 @@ export function TestPage({
   attempts: AttemptRow[];
   initialTab: TestTab;
   aiReady: boolean;
+  /** The set's exam date (YYYY-MM-DD), so reviews land before it. */
+  examDate?: string | null;
 }) {
   const pathname = usePathname();
   const [tab, setTab] = useState<TestTab>(initialTab);
@@ -87,7 +90,7 @@ export function TestPage({
         </div>
 
         <Tabs.Content value="cards" className="mt-6 rounded-lg focus-visible:outline-offset-4 sm:mt-8" forceMount hidden={tab !== "cards"}>
-          <QuickTest setId={setId} setStatus={setStatus} topics={topics} cards={cards} />
+          <QuickTest setId={setId} setStatus={setStatus} topics={topics} cards={cards} examDate={examDate} />
         </Tabs.Content>
         <Tabs.Content value="exam" className="mt-6 rounded-lg focus-visible:outline-offset-4 sm:mt-8" forceMount hidden={tab !== "exam"}>
           <ExamPractice

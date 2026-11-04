@@ -14,9 +14,14 @@ export type Mark = "learning" | "known";
 export const OTHER_TOPIC_ID = "other";
 export const ALL_TOPICS = "all";
 
-/** Levels 1 and 2 are "still learning" (lib/mastery buckets). */
-export function isLearning(level: MasteryLevel | number | undefined): boolean {
-  return level === 1 || level === 2;
+/**
+ * The flashcards "Still learning" pile: cards the student marked still
+ * learning, here or by missing them anywhere (every miss sets level 1).
+ * "Got it" moves a card to familiar (2), which is out of the pile. (The
+ * overview's "still learning" bucket, lib/mastery, also counts familiar.)
+ */
+export function isMarkedLearning(level: MasteryLevel | number | undefined): boolean {
+  return level === 1;
 }
 
 /** The card's topic for filtering: its topic id, or "other". */
@@ -33,7 +38,7 @@ export function matchesFilters(
 ): boolean {
   if (topic !== ALL_TOPICS && topicKey(card, topicIds) !== topic) return false;
   if (filter === "starred") return card.starred;
-  if (filter === "learning") return isLearning(levels.get(card.id));
+  if (filter === "learning") return isMarkedLearning(levels.get(card.id));
   return true;
 }
 

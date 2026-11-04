@@ -15,9 +15,10 @@ import type {
   BetaTextBlockParam,
 } from "@anthropic-ai/sdk/resources/beta/messages/messages";
 import type { BetaMessageStream } from "@anthropic-ai/sdk/lib/BetaMessageStream";
-import { FALLBACK_BETA, MODEL, getAnthropic } from "./client";
+import { FALLBACK_BETA, MODEL, REFUSAL_MESSAGE, getAnthropic } from "./client";
 import { describeLearningProfile } from "./learning-profile";
-import type { SetContext } from "./set-context";
+import { MAX_TOPICS } from "./prompts";
+import { TOPIC_SUMMARY_MAX_CHARS, TOPIC_TITLE_MAX_CHARS, type SetContext } from "./set-context";
 import type { LearningProfile, Topic } from "../types";
 
 /** How many earlier chat messages are sent with each question. */
@@ -35,6 +36,15 @@ export const TUTOR_CONTEXT_MAX_CHARS = 400_000;
 
 /** Longest question the tutor accepts, in characters. */
 export const TUTOR_QUESTION_MAX_CHARS = 8000;
+
+/**
+ * Each earlier turn is clipped to this many characters on its way to Claude
+ * (stored messages can be longer, and users can write them directly).
+ */
+export const TUTOR_TURN_MAX_CHARS = 8000;
+
+/** Earlier turns sent with a question, newest first, up to this many characters. */
+export const TUTOR_HISTORY_MAX_CHARS = 40_000;
 
 /** One earlier turn, as stored in chat_messages. */
 export type TutorTurn = { role: "user" | "assistant"; content: string };
@@ -66,12 +76,18 @@ function attr(value: string): string {
     .replace(/[\r\n]+/g, " ");
 }
 
+function clipLine(value: string, max: number): string {
+  const t = value.replace(/\s+/g, " ").trim();
+  return t.length <= max ? t : `${t.slice(0, max - 1).trimEnd()}…`;
+}
+
 function topicLines(topics: Topic[]): string {
   return topics
     .filter((t) => t && typeof t.title === "string" && t.title.trim())
+    .slice(0, MAX_TOPICS)
     .map((t, i) => {
-      const summary = typeof t.summary === "string" ? t.summary.trim() : "";
-      return `${i + 1}. ${t.title.trim()}${summary ? `: ${summary}` : ""}`;
+      const summary = typeof t.summary === "string" ? clipLine(t.summary, TOPIC_SUMMARY_MAX_CHARS) : "";
+      return `${i + 1}. ${clipLine(t.title, TOPIC_TITLE_MAX_CHARS)}${summary ? `: ${summary}` : ""}`;
     })
     .join("\n");
 }
@@ -124,16 +140,50 @@ export function buildTutorSystem(
   ];
 }
 
+/** A turn clipped for the prompt, marked so Claude knows it was shortened. */
+function clipTurn(content: string): string {
+  const t = content.trim();
+  return t.length <= TUTOR_TURN_MAX_CHARS ? t : `${t.slice(0, TUTOR_TURN_MAX_CHARS).trimEnd()}\n[... shortened ...]`;
+}
+
+/**
+ * Drops each declined exchange: the canned refusal note is the app's text,
+ * not Claude's, and re-sending the question that tripped a safety
+ * classifier with every later question makes more refusals likely. The
+ * exchange stays in the saved chat; it just isn't sent again.
+ */
+function withoutRefusals(turns: TutorTurn[]): TutorTurn[] {
+  const out: TutorTurn[] = [];
+  for (const turn of turns) {
+    if (turn.role === "assistant" && turn.content.trim() === REFUSAL_MESSAGE) {
+      if (out.length && out[out.length - 1].role === "user") out.pop();
+      continue;
+    }
+    out.push(turn);
+  }
+  return out;
+}
+
 /**
  * The conversation for the API: earlier turns (oldest first, at most
- * TUTOR_HISTORY_LIMIT), then the new question. Leading assistant turns are
- * dropped because the first message must come from the user; consecutive
- * same-role turns are fine (the API joins them).
+ * TUTOR_HISTORY_LIMIT, each clipped to TUTOR_TURN_MAX_CHARS, and only the
+ * newest that fit in TUTOR_HISTORY_MAX_CHARS), then the new question.
+ * Declined exchanges are left out. Leading assistant turns are dropped
+ * because the first message must come from the user; consecutive same-role
+ * turns are fine (the API joins them).
  */
 export function buildTutorMessages(history: TutorTurn[], question: string): BetaMessageParam[] {
-  const recent = history
-    .filter((t) => (t.role === "user" || t.role === "assistant") && t.content.trim())
-    .slice(-TUTOR_HISTORY_LIMIT);
+  const usable = withoutRefusals(
+    history.filter((t) => (t.role === "user" || t.role === "assistant") && t.content.trim()),
+  ).slice(-TUTOR_HISTORY_LIMIT);
+  const recent: TutorTurn[] = [];
+  let budget = TUTOR_HISTORY_MAX_CHARS;
+  for (let i = usable.length - 1; i >= 0; i--) {
+    const content = clipTurn(usable[i].content);
+    if (content.length > budget) break;
+    budget -= content.length;
+    recent.unshift({ role: usable[i].role, content });
+  }
   const firstUser = recent.findIndex((t) => t.role === "user");
   const turns = firstUser === -1 ? [] : recent.slice(firstUser);
   return [

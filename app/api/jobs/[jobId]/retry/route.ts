@@ -1,10 +1,12 @@
 // POST /api/jobs/[jobId]/retry
 // Re-queues one of the user's jobs that ended in an error, or one stuck
 // running with no update for 15+ minutes, and starts it again. 200 { jobId }.
-// A queued job is simply nudged. See docs/ARCHITECTURE.md section 8.
+// A queued job is simply nudged. A restart counts toward the same per-user
+// limit as a new job (429 when reached). See docs/ARCHITECTURE.md section 8.
 import { createClient, getUser } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { triggerJob } from "@/lib/jobs/trigger";
+import { takeQuota } from "@/lib/usage-limits";
 
 // Lets the in-process fallback (local dev, other hosts) run as long as allowed.
 export const maxDuration = 60;
@@ -12,8 +14,8 @@ export const maxDuration = 60;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const STALE_MS = 15 * 60_000;
 
-function json(body: Record<string, unknown>, status: number) {
-  return Response.json(body, { status, headers: { "cache-control": "no-store" } });
+function json(body: Record<string, unknown>, status: number, extraHeaders: Record<string, string> = {}) {
+  return Response.json(body, { status, headers: { "cache-control": "no-store", ...extraHeaders } });
 }
 
 type JobRow = {
@@ -69,6 +71,14 @@ export async function POST(request: Request, ctx: { params: Promise<{ jobId: str
     return json({ jobId: active.id, error: "Another run is already going." }, 409);
   }
 
+  if (job.kind !== "build_set" && job.kind !== "exam_questions") return json({ error: "Job not found." }, 404);
+  // A restart runs the whole job again, so it uses the same quota as a new one.
+  const quota = await takeQuota(supabase, job.kind);
+  if (!quota.ok) {
+    const wait = quota.retryAfterSeconds;
+    return json({ jobId: job.id, error: quota.message }, quota.status, wait ? { "retry-after": String(Math.ceil(wait)) } : {});
+  }
+
   // Only the service role may update jobs.
   let admin: ReturnType<typeof createAdminClient>;
   try {
@@ -93,6 +103,10 @@ export async function POST(request: Request, ctx: { params: Promise<{ jobId: str
     .eq("updated_at", job.updated_at)
     .select("id")
     .maybeSingle();
+  if (updateError?.code === "23505") {
+    // Another run of this kind started for the set in the meantime.
+    return json({ jobId: job.id, error: "Another run is already going." }, 409);
+  }
   if (updateError) return json({ error: "Couldn't restart it. Try again in a moment." }, 500);
   if (!requeued) return json({ jobId: job.id, error: "This job changed. Refresh and try again." }, 409);
 

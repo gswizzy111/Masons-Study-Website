@@ -103,7 +103,7 @@ export function ExamResults({
             value={percent}
             size={96}
             stroke={8}
-            tone={percent >= 70 ? "accent" : "learning"}
+            tone={percent >= 80 ? "accent" : "ink"}
             label="Score"
             valueText={`${percent}%`}
           >
@@ -179,7 +179,7 @@ export function ExamResults({
                       className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-line/70"
                     >
                       <div
-                        className={cn("h-full rounded-full", isWeak ? "bg-learning" : "bg-accent")}
+                        className={cn("h-full rounded-full", isWeak ? "bg-ink-2" : "bg-accent")}
                         style={{ width: `${Math.max(3, s.percent)}%` }}
                       />
                     </div>

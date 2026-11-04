@@ -20,7 +20,8 @@ type Props = {
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { setId } = await params;
-  const set = await getSet(setId).catch(() => null);
+  const set = await getSet(setId).catch(() => undefined);
+  if (set === null) return { title: "Set not found" };
   return { title: set ? `Learn · ${set.title}` : "Learn" };
 }
 
@@ -64,6 +65,7 @@ export default async function LearnPage({ params, searchParams }: Props) {
       aiReady={aiConfigured()}
       seed={newSeed()}
       nowIso={new Date().toISOString()}
+      examDate={set.exam_date}
     />
   );
 }

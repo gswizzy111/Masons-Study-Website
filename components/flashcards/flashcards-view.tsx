@@ -25,7 +25,7 @@ import {
   Star,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { recordAnswer } from "@/lib/learn/progress";
+import { levelAfterCorrect, recordAnswer } from "@/lib/learn/progress";
 import { cn, pluralize } from "@/lib/utils";
 import type { MasteryLevel, SetStatus, Topic } from "@/lib/types";
 import { PageContainer } from "@/components/app-shell";
@@ -38,7 +38,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
   ALL_TOPICS,
   OTHER_TOPIC_ID,
-  isLearning,
+  isMarkedLearning,
   matchesFilters,
   shuffled,
   topicKey,
@@ -69,6 +69,8 @@ type FlashcardsViewProps = {
   initialProgress: Array<{ card_id: string; level: MasteryLevel }>;
   /** "all", a topic id, or "other". */
   initialTopic: string;
+  /** The set's exam date (YYYY-MM-DD), so reviews land before it. */
+  examDate?: string | null;
 };
 
 const COARSE_QUERY = "(pointer: coarse)";
@@ -108,6 +110,7 @@ export function FlashcardsView({
   initialCards,
   initialProgress,
   initialTopic,
+  examDate = null,
 }: FlashcardsViewProps) {
   const router = useRouter();
   const reduceMotion = useReducedMotion() ?? false;
@@ -152,7 +155,7 @@ export function FlashcardsView({
     for (const card of cards) {
       if (topic !== ALL_TOPICS && topicKey(card, topicIds) !== topic) continue;
       if (card.starred) starred += 1;
-      if (isLearning(levels.get(card.id))) learning += 1;
+      if (isMarkedLearning(levels.get(card.id))) learning += 1;
     }
     return { starred, learning };
   }, [cards, levels, topic, topicIds]);
@@ -259,10 +262,12 @@ export function FlashcardsView({
     setSession((s) => ({ ...s, results: { ...s.results, [card.id]: value }, index: nextIndex }));
     setCardMotion({ dir: 1, fling: correct ? 1 : -1 });
     resetCardState();
+    // Shown at once with the same rule the save uses (lib/learn/progress).
+    const before = levels.get(card.id);
     setLevels((prev) => {
       const next = new Map(prev);
       const level = prev.get(card.id) ?? 0;
-      next.set(card.id, (correct ? Math.min(3, Math.max(1, level + 1)) : 1) as MasteryLevel);
+      next.set(card.id, correct ? levelAfterCorrect(level, "flashcard") : 1);
       return next;
     });
     announce(
@@ -276,10 +281,18 @@ export function FlashcardsView({
           setId,
           correct,
           mode: "flashcard",
+          examDate,
         });
         if (!saved) throw new Error("not saved");
         setLevels((prev) => new Map(prev).set(card.id, saved.level));
       } catch {
+        // Not saved: show the level the card still has.
+        setLevels((prev) => {
+          const next = new Map(prev);
+          if (before === undefined) next.delete(card.id);
+          else next.set(card.id, before);
+          return next;
+        });
         toast.error("Couldn't save that answer. Check your connection and try again.", {
           id: "flashcards-save",
         });
@@ -596,7 +609,10 @@ export function FlashcardsView({
                 </div>
 
                 {/* The card */}
-                <div className="relative h-[clamp(17rem,50dvh,25rem)] sm:h-[22rem] lg:h-[24rem]">
+                {/* Sized to the screen so the marking buttons below stay on the
+                    first screen (the space above and below the card is about
+                    32rem at every width); 13rem to 24rem. */}
+                <div className="relative h-[clamp(13rem,calc(100dvh-32rem),24rem)]">
                   <AnimatePresence initial={false} custom={cardCustom}>
                     <Flashcard
                       key={`${session.index}-${current.id}`}

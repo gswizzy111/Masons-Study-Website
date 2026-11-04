@@ -6,7 +6,10 @@
 //
 // Transitions (`applyAnswer`):
 // - any wrong answer -> level 1, streak 0. A mastered card that is missed
-//   drops to 1 and loses its review date; ease goes down 0.2 (min 1.3).
+//   (a lapse) drops to 1, loses its review date and its ease goes down 0.2
+//   (min 1.3). Misses before a card is mastered leave ease alone, so
+//   missing a new card a few times in one round doesn't shorten its
+//   reviews for good.
 // - mc correct -> at least 2 (multiple choice never masters a card).
 // - written, review or test correct -> 3 if the card was already 2+, else 2.
 // - flashcard (self-report) correct -> 2 (a mastered card stays mastered).
@@ -17,6 +20,11 @@
 //   ease +0.1 (max 3.0), due again after the new interval.
 // - a correct answer on a mastered card that is not due yet keeps its
 //   schedule (studying early should not push the review weeks out).
+// - with an exam date ahead, a review is never scheduled more than half
+//   the time left before the exam (at least 1 day), so every card comes
+//   back before the exam. The stored interval doesn't grow while capped
+//   (and ease doesn't either), so the long schedule picks up after the
+//   exam where it left off.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CardProgress, MasteryLevel } from "../types";
 
@@ -113,6 +121,26 @@ export function levelAfterCorrect(prev: MasteryLevel, mode: AnswerMode): Mastery
   }
 }
 
+/** Start of the exam day (local time) in ms, or NaN without a valid date. */
+function examStartMs(examDate: string | null | undefined): number {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(examDate?.trim() ?? "");
+  if (!match) return Number.NaN;
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])).getTime();
+}
+
+/** Longest gap (days) allowed before the next review, given the exam date. Infinity without one ahead. */
+export function reviewCapDays(examDate: string | null | undefined, now: Date = new Date()): number {
+  const examMs = examStartMs(examDate);
+  const left = examMs - now.getTime();
+  if (!Number.isFinite(left) || left <= 0) return Number.POSITIVE_INFINITY;
+  return Math.max(1, left / DAY_MS / 2);
+}
+
+export type ApplyOptions = {
+  /** The set's exam date (YYYY-MM-DD). Reviews are kept before it. */
+  examDate?: string | null;
+};
+
 function isPastDue(dueAt: string | null, now: Date): boolean {
   if (!dueAt) return true;
   const t = new Date(dueAt).getTime();
@@ -128,6 +156,7 @@ export function applyAnswer(
   correct: boolean,
   mode: AnswerMode,
   now: Date = new Date(),
+  options: ApplyOptions = {},
 ): ProgressState {
   const p = normalizeProgress(prev);
   const nowIso = now.toISOString();
@@ -146,7 +175,8 @@ export function applyAnswer(
       streak: 0,
       // A missed card starts its review schedule over once it is mastered again.
       interval_days: 0,
-      ease: clampEase(p.ease - 0.2),
+      // Only a lapse (a mastered card missed) makes its reviews come sooner.
+      ease: p.level === 3 ? clampEase(p.ease - 0.2) : p.ease,
       due_at: null,
     };
   }
@@ -157,17 +187,30 @@ export function applyAnswer(
   let dueAt: string | null = level === 3 ? p.due_at : null;
 
   if (level === 3) {
+    const cap = reviewCapDays(options.examDate, now);
+    const dueIn = (days: number) => new Date(now.getTime() + days * DAY_MS).toISOString();
     if (p.level < 3 || interval <= 0) {
       // Just mastered: first review tomorrow.
       interval = 1;
-      dueAt = new Date(now.getTime() + DAY_MS).toISOString();
+      dueAt = dueIn(Math.min(1, cap));
     } else if (isPastDue(p.due_at, now)) {
       // A due review answered correctly: stretch the gap.
-      interval = round2(Math.min(MAX_INTERVAL_DAYS, Math.max(1, interval) * ease));
-      ease = clampEase(ease + 0.1);
-      dueAt = new Date(now.getTime() + interval * DAY_MS).toISOString();
+      const next = round2(Math.min(MAX_INTERVAL_DAYS, Math.max(1, interval) * ease));
+      if (next > cap) {
+        // The exam comes first: review before it, and hold the schedule there.
+        dueAt = dueIn(cap);
+        interval = round2(Math.max(interval, cap));
+      } else {
+        interval = next;
+        ease = clampEase(ease + 0.1);
+        dueAt = dueIn(interval);
+      }
+    } else if (Number.isFinite(cap)) {
+      // Mastered and not due yet: keep the schedule, unless it runs past the exam.
+      const capAt = now.getTime() + cap * DAY_MS;
+      const dueMs = dueAt ? new Date(dueAt).getTime() : Number.NaN;
+      if (!Number.isFinite(dueMs) || dueMs > capAt) dueAt = new Date(capAt).toISOString();
     }
-    // Mastered and not due yet: keep the schedule as it is.
   } else {
     interval = 0;
   }
@@ -202,24 +245,34 @@ function toCardProgress(row: Record<string, unknown>): CardProgress {
  * `study_sets.last_studied_at`. Returns the saved row, or null if the read
  * or the write failed (never throws).
  *
+ * `examDate` is the set's exam date (reviews are kept before it). Pass it
+ * when you have it (null for none); when it is left out, it is read from
+ * the set.
+ *
  * Works with the browser or server client (RLS applies as the signed-in
  * user). With the service role, the row's user_id must already exist.
  */
 export async function recordAnswer(
   supabase: SupabaseClient,
-  input: { cardId: string; setId: string; correct: boolean; mode: AnswerMode },
+  input: { cardId: string; setId: string; correct: boolean; mode: AnswerMode; examDate?: string | null },
 ): Promise<CardProgress | null> {
   const { cardId, setId, correct, mode } = input;
   try {
-    const { data: existing, error: readError } = await supabase
-      .from("card_progress")
-      .select(PROGRESS_COLUMNS)
-      .eq("card_id", cardId)
-      .maybeSingle();
+    const [progressRead, setRead] = await Promise.all([
+      supabase.from("card_progress").select(PROGRESS_COLUMNS).eq("card_id", cardId).maybeSingle(),
+      input.examDate === undefined
+        ? supabase.from("study_sets").select("exam_date").eq("id", setId).maybeSingle()
+        : null,
+    ]);
+    const { data: existing, error: readError } = progressRead;
     if (readError) return null;
+    const examDate =
+      input.examDate !== undefined
+        ? input.examDate
+        : ((setRead?.data as { exam_date?: string | null } | null)?.exam_date ?? null);
 
     const now = new Date();
-    const next = applyAnswer(existing as Partial<ProgressState> | null, correct, mode, now);
+    const next = applyAnswer(existing as Partial<ProgressState> | null, correct, mode, now, { examDate });
 
     const owner = (existing as { user_id?: unknown } | null)?.user_id;
     const row = {

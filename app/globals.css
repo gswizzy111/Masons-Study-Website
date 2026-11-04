@@ -33,7 +33,8 @@
 
   --learning: #a86200;
   --learning-soft: #fbefd9;
-  --not-studied: #9aa0a8;
+  /* 3.4:1 on surface, 3.1:1 on bg: the 3:1 non-text minimum for bar segments. */
+  --not-studied: #868c95;
   --mastered: var(--accent);
 
   --danger: #b42318;
@@ -80,7 +81,8 @@
 
   --learning: #e3a33a;
   --learning-soft: #3a2a0f;
-  --not-studied: #5e656e;
+  /* 3.6:1 on surface, 3.3:1 on surface-2. */
+  --not-studied: #6a727c;
   --mastered: var(--accent);
 
   --danger: #f07167;
@@ -626,6 +628,12 @@
   .prose-study.prose-compact :where(h3) {
     font-size: 1rem;
     margin-top: 1.2em;
+  }
+
+  /* The tutor panel is narrower than 28rem: let tables fit it, and scroll
+     sideways only when their content really needs the room. */
+  .prose-study.prose-compact :where(table) {
+    min-width: 0;
   }
 
   /* Last in the block so they win over the heading margins above. */

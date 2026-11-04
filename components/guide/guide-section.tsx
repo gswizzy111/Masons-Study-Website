@@ -108,7 +108,9 @@ function NotWritten({
         </p>
         {summary ? <p className="text-sm leading-relaxed text-ink-2">It covers: {summary}</p> : null}
         <p className="text-sm leading-relaxed text-ink-2">
-          You can build the set again from the overview.{" "}
+          {failed
+            ? "Use Build again on the overview to write it. Your cards and progress stay."
+            : "You can build the set again from the overview."}{" "}
           <Link
             href={overviewHref}
             className="font-medium text-accent-strong underline decoration-1 underline-offset-4 hover:decoration-2"
@@ -164,6 +166,15 @@ export function GuideSectionView({
 
       {entry.status === "ready" ? (
         <SectionBody content={entry.content} />
+      ) : (entry.status === "pending" || entry.status === "writing") && entry.content ? (
+        <>
+          <p className="mb-5 flex items-center gap-2 text-sm font-medium text-accent-strong" data-print-hide>
+            <Spinner size="sm" />
+            {entry.status === "writing" ? "Updating this section. " : "Waiting to update this section. "}
+            This is the earlier version until the new one is in.
+          </p>
+          <SectionBody content={entry.content} />
+        </>
       ) : entry.status === "pending" || entry.status === "writing" ? (
         <WritingPlaceholder summary={entry.summary} />
       ) : (

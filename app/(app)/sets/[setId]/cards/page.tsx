@@ -10,7 +10,8 @@ type Params = Promise<{ setId: string }>;
 
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
   const { setId } = await params;
-  const set = await getSet(setId).catch(() => null);
+  const set = await getSet(setId).catch(() => undefined);
+  if (set === null) return { title: "Set not found" };
   return { title: set ? `Cards: ${set.title}` : "Cards" };
 }
 

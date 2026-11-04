@@ -67,6 +67,8 @@ type QuestionProps = {
   onDontKnow: () => void;
   onContinue: () => void;
   onOverride: () => void;
+  /** "I was wrong" after an answer was accepted with a typo. */
+  onOverrideWrong: () => void;
   onExplain: (() => void) | null;
 };
 
@@ -84,6 +86,7 @@ export function LearnQuestionCard({
   onDontKnow,
   onContinue,
   onOverride,
+  onOverrideWrong,
   onExplain,
 }: QuestionProps) {
   const id = useId();
@@ -222,6 +225,7 @@ export function LearnQuestionCard({
             autoAdvance={autoAdvance}
             onContinue={onContinue}
             onOverride={onOverride}
+            onOverrideWrong={onOverrideWrong}
             onExplain={onExplain}
           />
         ) : null}
@@ -310,6 +314,7 @@ function FeedbackPanel({
   autoAdvance,
   onContinue,
   onOverride,
+  onOverrideWrong,
   onExplain,
 }: {
   ref: Ref<HTMLDivElement>;
@@ -319,12 +324,14 @@ function FeedbackPanel({
   autoAdvance: boolean;
   onContinue: () => void;
   onOverride: () => void;
+  onOverrideWrong: () => void;
   onExplain: (() => void) | null;
 }) {
   const reduce = useReducedMotion();
   const panelId = useId();
   const { correct } = feedback;
-  const showTimer = correct && autoAdvance && !reduce;
+  // A typo waits for Continue, so the right spelling can be read (and "I was wrong" used).
+  const showTimer = correct && !feedback.typo && autoAdvance && !reduce;
 
   let title: string;
   if (correct) title = feedback.overridden ? "Marked as right" : feedback.typo ? "Correct, with a typo" : "Correct";
@@ -334,6 +341,7 @@ function FeedbackPanel({
 
   const canOverride =
     !correct && question.kind === "written" && !feedback.dontKnow && feedback.given.trim() !== "";
+  const canUndoTypo = correct && feedback.typo && !feedback.overridden;
 
   return (
     <div
@@ -374,10 +382,13 @@ function FeedbackPanel({
 
         <div id={`${panelId}-details`} className="flex flex-col gap-3 empty:hidden">
         {correct && feedback.typo ? (
-          <p className="text-sm leading-relaxed text-ink">
-            <span className="text-ink-2">Spelled: </span>
-            <span className="font-medium break-words">{question.answer}</span>
-          </p>
+          <>
+            <p className="text-sm leading-relaxed text-ink">
+              <span className="text-ink-2">Spelled: </span>
+              <span className="font-medium break-words">{question.answer}</span>
+            </p>
+            <p className="text-sm text-ink-2">If you meant something else, mark it as wrong.</p>
+          </>
         ) : null}
 
         {!correct ? (
@@ -415,6 +426,11 @@ function FeedbackPanel({
         {canOverride ? (
           <Button variant="outline" onClick={onOverride}>
             <Check strokeWidth={1.75} aria-hidden />I was right
+          </Button>
+        ) : null}
+        {canUndoTypo ? (
+          <Button variant="outline" onClick={onOverrideWrong}>
+            <X strokeWidth={1.75} aria-hidden />I was wrong
           </Button>
         ) : null}
         {!correct && onExplain && aiReady ? (

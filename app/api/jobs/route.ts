@@ -1,13 +1,18 @@
 // POST /api/jobs { setId, kind: 'build_set' | 'exam_questions', options? }
 // Creates a background job for one of the signed-in user's study sets and
-// starts it. 201 { jobId }. If a job of the same kind is already queued or
-// running for the set, answers 409 with that job's id instead.
+// starts it. 201 { jobId }; 503 when Claude isn't configured. If a job of the same kind is already queued or
+// running for the set, answers 409 with that job's id instead. When the
+// user has started too many jobs of this kind lately, answers 429 (the
+// limit is enforced by a trigger on public.jobs, see lib/usage-limits.ts).
 // See docs/ARCHITECTURE.md section 8.
 import { z } from "zod";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient, getUser } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { aiConfigured } from "@/lib/env";
 import { triggerJob } from "@/lib/jobs/trigger";
 import { EXAM_MAX_COUNT, EXAM_MIN_COUNT } from "@/lib/ai/exam-questions";
+import { LIMIT_ERROR_CODE, limitMessage, waitFromLimitError } from "@/lib/usage-limits";
 
 // Lets the in-process fallback (local dev, other hosts) run as long as allowed.
 export const maxDuration = 60;
@@ -38,8 +43,36 @@ const Body = z.discriminatedUnion("kind", [
   }),
 ]);
 
-function json(body: Record<string, unknown>, status: number) {
-  return Response.json(body, { status, headers: { "cache-control": "no-store" } });
+function json(body: Record<string, unknown>, status: number, extraHeaders: Record<string, string> = {}) {
+  return Response.json(body, { status, headers: { "cache-control": "no-store", ...extraHeaders } });
+}
+
+type JobKind = "build_set" | "exam_questions";
+
+/** The newest queued or running job of this kind for the set, if any. */
+async function findActiveJob(supabase: SupabaseClient, setId: string, kind: JobKind) {
+  const { data } = await supabase
+    .from("jobs")
+    .select("id, status, updated_at")
+    .eq("set_id", setId)
+    .eq("kind", kind)
+    .in("status", ["queued", "running"])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data as { id: string; status: string; updated_at: string } | null;
+}
+
+/** 409 with the job that is already going (a queued one is nudged: the claim is atomic). */
+async function alreadyActive(active: { id: string; status: string }, kind: JobKind, origin: string) {
+  if (active.status === "queued") await triggerJob(active.id, origin);
+  return json(
+    {
+      jobId: active.id,
+      error: kind === "build_set" ? "This set is already being built." : "Questions are already being written.",
+    },
+    409,
+  );
 }
 
 function problemWith(issues: z.core.$ZodIssue[]): string {
@@ -69,6 +102,10 @@ export async function POST(request: Request) {
 
   const user = await getUser();
   if (!user) return json({ error: "Your session ended. Log in again to continue." }, 401);
+  // Both kinds of job are Claude calls: without a key the job could only fail.
+  if (!aiConfigured()) {
+    return json({ error: "Claude isn't connected to this site yet.", code: "not_configured" }, 503);
+  }
   const supabase = await createClient();
 
   // RLS: only the owner can see the set.
@@ -83,27 +120,12 @@ export async function POST(request: Request) {
   const origin = new URL(request.url).origin;
 
   // One queued or running job of each kind per set.
-  const { data: active } = await supabase
-    .from("jobs")
-    .select("id, status, updated_at")
-    .eq("set_id", setId)
-    .eq("kind", kind)
-    .in("status", ["queued", "running"])
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const active = await findActiveJob(supabase, setId, kind);
   if (active) {
-    const stale = Date.now() - new Date(active.updated_at as string).getTime() > STALE_MS;
+    const stale = Date.now() - new Date(active.updated_at).getTime() > STALE_MS;
     if (active.status === "queued" || !stale) {
       // A queued job may have lost its trigger; nudging it is safe (atomic claim).
-      if (active.status === "queued") await triggerJob(active.id as string, origin);
-      return json(
-        {
-          jobId: active.id,
-          error: kind === "build_set" ? "This set is already being built." : "Questions are already being written.",
-        },
-        409,
-      );
+      return alreadyActive(active, kind, origin);
     }
     // A running job that stopped updating long ago has died: close it out.
     try {
@@ -126,7 +148,19 @@ export async function POST(request: Request) {
     .insert({ set_id: setId, kind, options, status: "queued" })
     .select("id")
     .single();
-  if (insertError || !job) return json({ error: "Couldn't start that. Try again in a moment." }, 500);
+  if (insertError?.code === "23505") {
+    // Another request started the same job a moment ago (jobs_one_active_per_kind).
+    const winner = await findActiveJob(supabase, setId, kind);
+    if (winner) return alreadyActive(winner, kind, origin);
+  }
+  if (insertError?.code === LIMIT_ERROR_CODE) {
+    const wait = waitFromLimitError(insertError);
+    return json({ error: limitMessage(kind, wait) }, 429, { "retry-after": String(Math.ceil(wait)) });
+  }
+  if (insertError || !job) {
+    if (insertError) console.error("[api/jobs] insert failed:", insertError.code ?? "", insertError.message);
+    return json({ error: "Couldn't start that. Try again in a moment." }, 500);
+  }
 
   if (kind === "build_set") {
     await supabase.from("study_sets").update({ status: "building" }).eq("id", setId);

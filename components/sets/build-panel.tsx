@@ -15,18 +15,25 @@ import { useSetJob } from "@/components/sets/set-job-context";
 
 /**
  * The set's build state at the top of the overview: live progress while
- * Claude builds, a clear next step for drafts, and the error with Retry when
- * a build stopped. Renders nothing for a ready set with no recent problem.
+ * Claude builds, a clear next step for drafts, the error with Retry when a
+ * build stopped, and Build again when a finished build left sections
+ * unwritten. Renders nothing for a ready set with no recent problem.
  */
 export function BuildPanel({
   userId,
   materialCount,
   built,
+  failedSections = 0,
+  aiReady = true,
 }: {
   userId: string;
   materialCount: number;
-  /** The set has topics from an earlier build. */
+  /** The set has a study guide from an earlier build (some section has text). */
   built: boolean;
+  /** Guide sections the last build couldn't write. */
+  failedSections?: number;
+  /** Claude is configured on this site; building needs it. */
+  aiReady?: boolean;
 }) {
   const router = useRouter();
   const { setId, setStatus, job, loading, active } = useSetJob();
@@ -52,6 +59,7 @@ export function BuildPanel({
       setId={setId}
       userId={userId}
       built={built}
+      aiReady={aiReady}
       trigger={
         <Button variant={materialCount === 0 ? "primary" : "outline"}>
           <FilePlus2 strokeWidth={1.75} aria-hidden />
@@ -61,9 +69,15 @@ export function BuildPanel({
     />
   );
 
-  // A build is queued or running.
+  const notConnected = aiReady
+    ? null
+    : "Claude is not connected to this site yet, so the set can't be built. Add ANTHROPIC_API_KEY to the site's settings, then build it.";
+
+  // A build is queued or running. Only a build started as an update says
+  // so: a first build saves its topics partway through, and must keep
+  // saying "Building".
   if (active && job) {
-    const updating = Boolean((job.options as { regenerate?: unknown } | null)?.regenerate) || built;
+    const updating = Boolean((job.options as { regenerate?: unknown } | null)?.regenerate);
     return (
       <Panel
         tone="accent"
@@ -123,11 +137,11 @@ export function BuildPanel({
         tone="danger"
         icon={<CircleAlert className="size-5" strokeWidth={1.75} />}
         title="The build stopped"
-        body="Something went wrong while building this set. Try again, or check that your files can be read."
+        body={notConnected ?? "Something went wrong while building this set. Try again, or check that your files can be read."}
         actions={
           <>
             {addMaterial}
-            <Button onClick={build} loading={starting} disabled={materialCount === 0}>
+            <Button onClick={build} loading={starting} disabled={materialCount === 0 || !aiReady}>
               <Hammer strokeWidth={1.75} aria-hidden />
               Build again
             </Button>
@@ -154,13 +168,44 @@ export function BuildPanel({
         tone="neutral"
         icon={<Hammer className="size-5" strokeWidth={1.75} />}
         title="Ready to build"
-        body={`${pluralize(materialCount, "item")} added. Build the set and Claude writes the study guide and flashcards. It takes a few minutes.`}
+        body={
+          notConnected ??
+          `${pluralize(materialCount, "item")} added. Build the set and Claude writes the study guide and flashcards. It takes a few minutes.`
+        }
         actions={
           <>
             {addMaterial}
-            <Button onClick={build} loading={starting}>
+            <Button onClick={build} loading={starting} disabled={!aiReady}>
               <Sparkles strokeWidth={1.75} aria-hidden />
               Build the set
+            </Button>
+          </>
+        }
+      />
+    );
+  }
+
+  // The last build finished, but some sections couldn't be written. A new
+  // build rewrites the guide; written sections keep their text until the
+  // new text is in, and cards and progress stay.
+  if (setStatus === "ready" && failedSections > 0) {
+    const fallback =
+      failedSections === 1
+        ? "One section of the guide couldn't be written."
+        : `${failedSections} sections of the guide couldn't be written.`;
+    const message = job?.status === "done" && job.message ? job.message : `${fallback} Build again to try once more.`;
+    return (
+      <Panel
+        tone="danger"
+        icon={<CircleAlert className="size-5" strokeWidth={1.75} />}
+        title={failedSections === 1 ? "A section wasn't written" : "Some sections weren't written"}
+        body={notConnected ?? `${message} Your cards and progress stay as they are.`}
+        actions={
+          <>
+            {addMaterial}
+            <Button onClick={build} loading={starting} disabled={!aiReady}>
+              <Hammer strokeWidth={1.75} aria-hidden />
+              Build again
             </Button>
           </>
         }

@@ -36,11 +36,12 @@ type Result = {
   save: "saving" | "saved" | "failed";
 };
 
+// Never clamped: tiles grow to fit their text, so a definition is never cut off.
 const TEXT_CLASSES: Record<ReturnType<typeof textSize>, string> = {
   lg: "text-base sm:text-lg",
   md: "text-sm sm:text-base",
-  sm: "text-[0.8125rem] leading-snug sm:text-sm line-clamp-6 sm:line-clamp-none",
-  xs: "text-xs leading-snug sm:text-[0.8125rem] line-clamp-7 sm:line-clamp-8",
+  sm: "text-[0.8125rem] leading-snug sm:text-sm",
+  xs: "text-xs leading-snug sm:text-[0.8125rem]",
 };
 
 const START_CLOCK = "0.0";
@@ -92,6 +93,9 @@ export function MatchGame({
 
   const pairs = board.length / 2;
   const pairsLeft = pairs - gone.length / 2;
+  // A definition too long for a tile (shortened on the board) is shown in full below it.
+  const selectedTile = selected ? board.find((t) => t.id === selected) : undefined;
+  const shownInFull = selectedTile && selectedTile.full !== selectedTile.text ? selectedTile : null;
 
   const say = (text: string) => setAnnouncement((prev) => ({ id: prev.id + 1, text }));
 
@@ -405,8 +409,10 @@ export function MatchGame({
             aria-label="Tiles"
             onKeyDown={onGridKeyDown}
             className={cn(
-              "grid auto-rows-fr grid-cols-3 gap-2 sm:grid-cols-4 sm:gap-3",
-              "h-[clamp(22rem,calc(100dvh-var(--header-h)-9rem),34rem)] sm:h-[clamp(24rem,calc(100dvh-var(--header-h)-12rem),32rem)]",
+              // Phones: two columns, each row as tall as its text. Wider: equal
+              // tiles that fill the space and still grow if a text needs more.
+              "grid auto-rows-[minmax(5.5rem,auto)] grid-cols-2 gap-2 sm:auto-rows-fr sm:grid-cols-4 sm:gap-3",
+              "sm:min-h-[clamp(24rem,calc(100dvh-var(--header-h)-12rem),32rem)]",
               "scroll-mt-[calc(var(--header-h)+5rem)] scroll-mb-24",
             )}
           >
@@ -427,6 +433,7 @@ export function MatchGame({
                   disabled={isGone}
                   aria-pressed={isSelected}
                   aria-label={`${tile.side === "term" ? "Term" : "Definition"}: ${tile.full}`}
+                  aria-describedby={shownInFull?.id === tile.id ? `${uid}-full` : undefined}
                   title={tile.full !== tile.text ? tile.full : undefined}
                   className={cn(
                     "relative flex min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-md border px-2 py-2 text-center break-words text-ink select-none sm:px-3",
@@ -445,7 +452,9 @@ export function MatchGame({
                   <span
                     lang="en"
                     className={cn(
-                      "block w-full min-w-0 hyphens-auto",
+                      // No automatic hyphens: a split term reads as a misspelling.
+                      // break-words only steps in when one word is wider than the tile.
+                      "block w-full min-w-0 hyphens-manual",
                       tile.side === "term" && "font-semibold",
                       TEXT_CLASSES[textSize(tile.text)],
                     )}
@@ -456,6 +465,15 @@ export function MatchGame({
               );
             })}
           </div>
+          {shownInFull ? (
+            <p
+              id={`${uid}-full`}
+              className="mt-3 rounded-md border border-line bg-surface-2/60 px-3.5 py-2.5 text-sm leading-relaxed text-ink"
+            >
+              <span className="text-ink-2">{shownInFull.side === "term" ? "Term" : "Definition"}: </span>
+              {shownInFull.full}
+            </p>
+          ) : null}
         </>
       )}
 

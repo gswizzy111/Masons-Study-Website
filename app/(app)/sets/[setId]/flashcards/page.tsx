@@ -20,7 +20,8 @@ type ProgressRow = { card_id: string; level: MasteryLevel };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { setId } = await params;
-  const set = await getSet(setId).catch(() => null);
+  const set = await getSet(setId).catch(() => undefined);
+  if (set === null) return { title: "Set not found" };
   return { title: set ? `Flashcards · ${set.title}` : "Flashcards" };
 }
 
@@ -67,6 +68,7 @@ export default async function FlashcardsPage({ params, searchParams }: Props) {
       initialCards={cards}
       initialProgress={progress}
       initialTopic={topic}
+      examDate={set.exam_date}
     />
   );
 }

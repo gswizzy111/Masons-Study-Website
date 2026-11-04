@@ -159,7 +159,13 @@ export function GuideView({ setId, setTitle, initialStatus, initialTopics, initi
               className="@4xl:hidden"
             />
 
-            {building ? <BuildingBanner written={written} total={total} /> : null}
+            {building ? (
+              <BuildingBanner
+                written={written}
+                total={total}
+                updating={entries.some((e) => (e.status === "pending" || e.status === "writing") && e.content)}
+              />
+            ) : null}
 
             <div ref={contentRef} className="flex flex-col">
               {entries.map((entry, i) => (
@@ -184,7 +190,7 @@ export function GuideView({ setId, setTitle, initialStatus, initialTopics, initi
   );
 }
 
-function BuildingBanner({ written, total }: { written: number; total: number }) {
+function BuildingBanner({ written, total, updating }: { written: number; total: number; updating: boolean }) {
   return (
     <div
       data-print-hide
@@ -193,11 +199,15 @@ function BuildingBanner({ written, total }: { written: number; total: number }) 
       <div className="flex items-start gap-3">
         <Spinner size="sm" className="mt-0.5 text-accent-strong" />
         <p role="status" className="text-[0.9375rem] leading-relaxed text-ink">
-          <span className="font-medium">Claude is writing your guide.</span>{" "}
+          <span className="font-medium">
+            {updating ? "Claude is updating your guide." : "Claude is writing your guide."}
+          </span>{" "}
           <span className="tabular-nums">
             {written} of {total}
           </span>{" "}
-          sections done. Each one appears here as soon as it&apos;s written.
+          {updating
+            ? "sections done. The others show their earlier text until the new version is in."
+            : "sections done. Each one appears here as soon as it's written."}
         </p>
       </div>
       <Progress

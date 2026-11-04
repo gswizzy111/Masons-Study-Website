@@ -63,8 +63,25 @@ function sectionMarkdown(title) {
 - What happens to pyruvate without oxygen?`;
 }
 
+// Resolves a local "$ref" ("#/$defs/x") against the request's root schema.
+// The SDK's zod helper puts array item shapes in $defs.
+function resolveRef(schema, root) {
+  let node = schema;
+  for (let hops = 0; node && typeof node === "object" && typeof node.$ref === "string" && hops < 20; hops++) {
+    if (!node.$ref.startsWith("#")) return node;
+    let target = root;
+    for (const raw of node.$ref.replace(/^#\/?/, "").split("/").filter(Boolean)) {
+      const seg = raw.replace(/~1/g, "/").replace(/~0/g, "~");
+      target = target?.[seg];
+    }
+    node = target;
+  }
+  return node;
+}
+
 // Build sample data that satisfies a JSON schema, with smart values for known keys.
 function fake(schema, key = "", ctx = {}) {
+  if (ctx.root && schema && typeof schema === "object" && schema.$ref) schema = resolveRef(schema, ctx.root);
   if (!schema || typeof schema !== "object") return null;
   if (schema.anyOf) return fake(schema.anyOf.find((s) => s.type !== "null") || schema.anyOf[0], key, ctx);
   if (schema.oneOf) return fake(schema.oneOf[0], key, ctx);
@@ -154,7 +171,7 @@ function buildReply(body) {
     return { refusal: true, text: "" };
   }
   if (schema) {
-    return { text: JSON.stringify(fake(schema, "", { sectionTitle: sectionTitleFrom(body) })) };
+    return { text: JSON.stringify(fake(schema, "", { root: schema, sectionTitle: sectionTitleFrom(body) })) };
   }
   if (/transcrib/i.test(question)) {
     return { text: "Lecture 4: Cellular respiration\n\nGlycolysis happens in the cytosol. [Figure: the ten steps of glycolysis]" };

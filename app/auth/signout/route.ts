@@ -1,6 +1,7 @@
 // POST only (a GET gets 405, so link prefetching can never sign anyone out).
 // Form field `scope=global` signs out on every device; default is this one.
 import { NextResponse, type NextRequest } from "next/server";
+import { redirectTo } from "../redirect";
 import { createClient } from "@/lib/supabase/server";
 import { RECOVERY_COOKIE } from "../recovery-cookie";
 
@@ -38,7 +39,7 @@ export async function POST(request: NextRequest) {
     console.error("[auth/signout] failed:", err);
   }
 
-  const response = NextResponse.redirect(new URL("/", request.nextUrl.origin), 303);
+  const response = redirectTo("/", 303);
   response.cookies.delete(RECOVERY_COOKIE);
   return response;
 }

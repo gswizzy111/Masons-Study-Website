@@ -157,9 +157,40 @@ export type CleanQuestion = {
 
 const LETTER_PREFIX = /^\(?[A-Ea-e1-5][.):]\s+/;
 
-/** Usable questions: 4-5 distinct choices, a valid answer, known topic or null. */
-export function normalizeQuestions(output: ExamBatchOutput, topicIds: Set<string>): CleanQuestion[] {
+/**
+ * Puts the correct choice at `target` and the other choices, shuffled,
+ * around it. Explanations refer to choices by content, never by letter, so
+ * reordering is safe.
+ */
+export function placeAnswer(
+  choices: readonly string[],
+  answerIndex: number,
+  target: number,
+  random: () => number = Math.random,
+): { choices: string[]; answer_index: number } {
+  const others = choices.filter((_, i) => i !== answerIndex);
+  for (let i = others.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [others[i], others[j]] = [others[j], others[i]];
+  }
+  const at = Math.max(0, Math.min(choices.length - 1, target));
+  others.splice(at, 0, choices[answerIndex]);
+  return { choices: others, answer_index: at };
+}
+
+/**
+ * Usable questions: 4-5 distinct choices, a valid answer, known topic or
+ * null. The answer key is not left to the model (models favor some
+ * positions): the correct choice is moved to positions that rotate through
+ * the batch from a random start, and the other choices are shuffled.
+ */
+export function normalizeQuestions(
+  output: ExamBatchOutput,
+  topicIds: Set<string>,
+  random: () => number = Math.random,
+): CleanQuestion[] {
   const out: CleanQuestion[] = [];
+  const start = Math.floor(random() * 5);
   for (const q of output.questions) {
     const stem = clip(noEmDash(q.stem), 6000);
     const explanation = noEmDash(q.explanation).trim();
@@ -168,11 +199,12 @@ export function normalizeQuestions(output: ExamBatchOutput, topicIds: Set<string
     if (choices.length < 4 || choices.length > 5 || choices.some((c) => !c)) continue;
     if (new Set(choices.map((c) => c.toLowerCase())).size !== choices.length) continue;
     if (!Number.isInteger(q.answer_index) || q.answer_index < 0 || q.answer_index >= choices.length) continue;
+    const placed = placeAnswer(choices, q.answer_index, (start + out.length) % choices.length, random);
     out.push({
       topic_id: topicIds.has(q.topic_id) ? q.topic_id : null,
       stem,
-      choices,
-      answer_index: q.answer_index,
+      choices: placed.choices,
+      answer_index: placed.answer_index,
       explanation,
       difficulty: q.difficulty,
     });
@@ -184,7 +216,7 @@ export function normalizeQuestions(output: ExamBatchOutput, topicIds: Set<string
 // The structured call
 // ---------------------------------------------------------------------------
 
-/** Claude replied, but not in the requested shape (after one retry). */
+/** Claude replied, but not in the requested shape (after one retry), or ran out of room. */
 export class StructuredOutputError extends Error {
   constructor(message = "Claude's reply came back in an unexpected shape. Try again.") {
     super(message);
@@ -209,8 +241,10 @@ export type StructuredCallOptions<S extends z.ZodType> = {
  * One structured call through `client.beta.messages.stream` with the refusal
  * fallback beta. The JSON is validated with the zod schema here rather than by
  * the SDK, so a mid-stream fallback (text split over several blocks) still
- * parses. Throws AiRefusalError on a refusal (after the fallback also
- * declined), StructuredOutputError on a bad shape, or the SDK's errors.
+ * parses. A reply that isn't valid JSON or misses fields is asked for once
+ * more; one cut off at max_tokens is not. Throws AiRefusalError on a refusal
+ * (after the fallback also declined), StructuredOutputError on a bad shape
+ * or a cut-off reply, or the SDK's errors.
  */
 export async function callStructured<S extends z.ZodType>(opts: StructuredCallOptions<S>): Promise<z.infer<S>> {
   const client = getAnthropic();
@@ -245,8 +279,11 @@ export async function callStructured<S extends z.ZodType>(opts: StructuredCallOp
     assertNotRefused(message);
 
     if (message.stop_reason === "max_tokens") {
-      lastProblem = "Claude's answer ran too long and was cut off.";
-      continue;
+      // The same request would almost surely run out of room again, at the
+      // cost of another long call. Fail this part now; the rest goes on.
+      throw new StructuredOutputError(
+        "Claude's answer ran too long and was cut off. Try splitting this material into smaller sets.",
+      );
     }
     const text = textOf(message).trim();
     let json: unknown;

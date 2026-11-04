@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/supabase/server";
 import type { Profile } from "@/lib/types";
 import { PageContainer } from "@/components/app-shell";
@@ -13,9 +14,12 @@ export default async function OnboardingPage() {
   const { supabase, user } = await requireUser();
   const { data: profile } = await supabase
     .from("profiles")
-    .select("display_name, learning_profile")
+    .select("display_name, learning_profile, onboarded_at")
     .eq("id", user.id)
-    .maybeSingle<Pick<Profile, "display_name" | "learning_profile">>();
+    .maybeSingle<Pick<Profile, "display_name" | "learning_profile" | "onboarded_at">>();
+
+  // Already answered (or skipped): the questions live in Settings now.
+  if (profile?.onboarded_at) redirect("/dashboard");
 
   const firstName = profile?.display_name?.trim().split(/\s+/)[0];
 

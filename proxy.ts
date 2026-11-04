@@ -6,19 +6,13 @@
 // /api/* and /auth/* are excluded: they check auth themselves.
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
+import { safeNextPath } from "@/lib/safe-next";
 
 const PRIVATE_PREFIXES = ["/dashboard", "/sets", "/settings", "/onboarding"];
 const AUTH_PAGES = ["/login", "/signup"];
 
 function matchesPrefix(pathname: string, prefixes: string[]): boolean {
   return prefixes.some((p) => pathname === p || pathname.startsWith(`${p}/`));
-}
-
-function safeNext(value: string | null): string | null {
-  if (!value || !value.startsWith("/") || value.startsWith("//") || value.startsWith("/\\")) {
-    return null;
-  }
-  return value;
 }
 
 export async function proxy(request: NextRequest) {
@@ -86,7 +80,7 @@ export async function proxy(request: NextRequest) {
 
   if (user && matchesPrefix(pathname, AUTH_PAGES)) {
     // `next` is a same-site path and may carry its own query string.
-    const next = safeNext(request.nextUrl.searchParams.get("next")) ?? "/dashboard";
+    const next = safeNextPath(request.nextUrl.searchParams.get("next")) ?? "/dashboard";
     return redirectTo(new URL(next, request.url));
   }
 

@@ -21,6 +21,7 @@ import {
   type TutorTurn,
 } from "@/lib/ai/chat";
 import { loadSetContext, type SetContext } from "@/lib/ai/set-context";
+import { takeQuota } from "@/lib/usage-limits";
 import {
   CHAT_CONTROL,
   CONTEXT_TRUNCATED_HEADER,
@@ -40,8 +41,10 @@ const MAX_SAVED_CHARS = 60_000;
 
 const NO_STORE = { "cache-control": "no-store" };
 
-function fail(status: number, error: string, message: string) {
-  return Response.json({ error, message }, { status, headers: NO_STORE });
+function fail(status: number, error: string, message: string, retryAfterSeconds?: number) {
+  const headers: Record<string, string> = { ...NO_STORE };
+  if (retryAfterSeconds) headers["retry-after"] = String(Math.ceil(retryAfterSeconds));
+  return Response.json({ error, message }, { status, headers });
 }
 
 function parseBody(raw: unknown): { setId: string; message: string } | string {
@@ -124,6 +127,13 @@ export async function POST(request: Request) {
   }
 
   if (request.signal.aborted) return new Response(null, { status: 499 });
+
+  // Per-user limit on tutor turns (each one sends the set's material).
+  const quota = await takeQuota(supabase, "chat");
+  if (!quota.ok) {
+    const code = quota.status === 429 ? "rate_limited" : "unavailable";
+    return fail(quota.status, code, quota.message, quota.retryAfterSeconds);
+  }
 
   const history: TutorTurn[] = (historyResult.data ?? [])
     .slice()
@@ -226,7 +236,9 @@ export async function POST(request: Request) {
         const stoppedByStudent = interrupted && !timedOut;
 
         if (stopReason === "refusal") {
-          // Claude and its fallback declined. Drop any partial text.
+          // Claude and its fallback declined. Drop any partial text. The
+          // exchange is saved so the student sees it, but buildTutorMessages
+          // never sends a declined exchange to Claude again.
           send(formatChatControl("refusal", REFUSAL_MESSAGE));
           await saveAnswer(REFUSAL_MESSAGE);
         } else if (stoppedByStudent) {

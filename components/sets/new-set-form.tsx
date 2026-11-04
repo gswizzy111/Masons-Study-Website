@@ -38,7 +38,16 @@ type Errors = Partial<Record<"title" | "description" | "course" | "notes", strin
  * and opens the set. Failures along the way keep what was saved and offer a
  * retry.
  */
-export function NewSetForm({ courses: initialCourses, userId }: { courses: CourseLite[]; userId: string }) {
+export function NewSetForm({
+  courses: initialCourses,
+  userId,
+  aiReady = true,
+}: {
+  courses: CourseLite[];
+  userId: string;
+  /** Claude is configured. Without it the set is saved with its material but not built. */
+  aiReady?: boolean;
+}) {
   const router = useRouter();
   const formId = useId();
   const queue = useUploadQueue();
@@ -102,7 +111,9 @@ export function NewSetForm({ courses: initialCourses, userId }: { courses: Cours
   }
 
   async function finish(id: string, materialCount: number) {
-    if (materialCount > 0) await startBuild(id);
+    // Without Claude a build would only fail: save the set and its material,
+    // and the overview says how to build it later.
+    if (materialCount > 0 && aiReady) await startBuild(id);
     else router.push(`/sets/${id}`);
   }
 
@@ -204,7 +215,7 @@ export function NewSetForm({ courses: initialCourses, userId }: { courses: Cours
     ? queue.items.some((it) => it.status === "error")
       ? "Retry failed uploads"
       : "Continue"
-    : hasMaterial
+    : hasMaterial && aiReady
       ? "Create and build"
       : "Create set";
 
@@ -327,9 +338,11 @@ export function NewSetForm({ courses: initialCourses, userId }: { courses: Cours
       <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="flex max-w-[52ch] items-start gap-2 text-sm leading-relaxed text-ink-2">
           <Sparkles className="mt-0.5 size-4 shrink-0 text-accent-strong" strokeWidth={1.75} aria-hidden />
-          {hasMaterial
-            ? "Claude writes a study guide and flashcards from your material. It takes a few minutes, and you can leave while it works."
-            : "No material yet? You can create the set now and add files later."}
+          {!aiReady
+            ? "Claude isn't connected to this site yet, so the set is saved with your material and built once Claude is connected."
+            : hasMaterial
+              ? "Claude writes a study guide and flashcards from your material. It takes a few minutes, and you can leave while it works."
+              : "No material yet? You can create the set now and add files later."}
         </p>
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center">
           {!locked ? (

@@ -44,7 +44,7 @@ hex in components.
 | `--accent-soft` | `bg-accent-soft` | `#E1F0EC` | `#12332D` | Tinted panels, call-outs, selected chips |
 | `--learning` | `bg-learning` / `text-learning` | `#A86200` | `#E3A33A` | Still learning |
 | `--learning-soft` | `bg-learning-soft` | `#FBEFD9` | `#3A2A0F` | Learning tint |
-| `--not-studied` | `bg-not-studied` | `#9AA0A8` | `#5E656E` | Not studied (bars and dots, never text) |
+| `--not-studied` | `bg-not-studied` | `#868C95` | `#6A727C` | Not studied (bars and dots, never text). At least 3:1 against surfaces, the non-text minimum (darkened from `#9AA0A8` / `#5E656E`, which were under 3:1) |
 | `--mastered` | `bg-mastered` | = accent | = accent | Mastered |
 | `--danger` | `bg-danger` / `text-danger` | `#B42318` | `#F07167` | Errors, destructive actions |
 | `--danger-soft` | `bg-danger-soft` | `#FDECEA` | `#3A1614` | Error tint |
@@ -62,7 +62,20 @@ Additions (non-breaking, for contrast):
 **Mastery colors are fixed everywhere:** not studied = `not-studied`, still
 learning = `learning`, mastered = `mastered`. Order in bars and legends:
 mastered, still learning, not studied (left to right). Labels: "Mastered",
-"Still learning", "Not studied".
+"Still learning", "Not studied", and "% mastered" for the percentage. Never
+"Learned": it reads like it could mean familiar.
+
+**Amber is only for "still learning".** Other states get their own
+treatment:
+
+- Cards due for review (which include mastered cards): neutral, e.g.
+  `Badge variant="neutral"` with a `RotateCcw` icon, `bg-surface-2
+  text-ink-2` tiles.
+- An exam that is soon: `font-medium text-ink` (weight, not color).
+- Scores: `text-accent-strong` at 80% and up, `text-ink` below. Never amber
+  (it would say "still learning") and never red (red means an error).
+- Decorative tiles: `bg-surface`, `bg-surface-2` or `graph-paper`, never a
+  mastery tint.
 
 ## Type
 
@@ -147,15 +160,38 @@ Also: `components/brand.tsx` (`Brand`, `BrandMark`), `components/markdown.tsx`
 (`<Markdown compact?>{md}</Markdown>`), `components/app-shell`
 (`AppShell`, `PageContainer`, `PageHeader`, `SkipLink`).
 
+## Set workspace
+
+- **Set header** (`components/sets/set-header.tsx`): on the overview, guide,
+  videos and cards tabs it shows the breadcrumb, the course and exam line and
+  the full title. On the study tabs (flashcards, learn, test, games) it is one
+  line (truncated title, Ask Claude, the set menu; Ask Claude is icon-only on
+  phones) so the card and its buttons, or the question and its choices, fit
+  on the first screen.
+- **Tutor panel** (`components/sets/set-workspace.tsx`): docked at 1280px+,
+  a sheet below. Escape closes either one, and focus goes back to the button
+  that opened it (or the header's Ask Claude button).
+- **Floating Ask Claude button**: a 48px icon circle, tablet and desktop only,
+  shown once the header button has scrolled out of view, never on the study
+  tabs or the Cards tab (it would cover row actions and answer buttons).
+
 ## Rendered markdown (`.prose-study`)
 
 Study guides, tutor answers and explanations render through `<Markdown>`:
 68ch measure, Fraunces h1-h3 (h2 opens with a hairline rule), bold in ink,
 blockquotes as teal call-outs (a bold first word becomes the label, e.g.
 `> **High-yield.** ...`), zebra tables in a horizontally scrolling, focusable
-wrapper, inline code and code blocks in JetBrains Mono, GFM task lists and
-footnotes. `compact` tightens it for chat bubbles. Raw HTML is dropped; links
-open in a new tab with `rel="noreferrer"`.
+wrapper (a group named from the header row, "Table: Enzyme, Where,
+Regulation"; an empty corner header cell gets a screen-reader name), inline
+code and code blocks in JetBrains Mono, GFM task lists and footnotes.
+`compact` tightens it for chat bubbles. Raw HTML is dropped. Links open in a
+new tab with `rel="noreferrer"`, except `#anchors` and root-relative `/paths`
+(`//host` and `/\host` count as external).
+
+**No images.** Claude writes this Markdown from uploaded material, which can
+carry hidden instructions, and a remote image loads by itself and could send
+whatever is in its address to another site. So `![alt](url)` renders as
+"[Image: alt]" text and nothing is fetched.
 
 Print: anything with `data-print-hide` disappears; tokens switch to black on
 white; tables, call-outs and code avoid page breaks.

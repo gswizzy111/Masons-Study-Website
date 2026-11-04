@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <body style="margin:0;padding:24px;background:#F7F6F2;font-family:Arial,Helvetica,sans-serif;color:#16181C;">
+    <div style="max-width:480px;margin:0 auto;background:#FFFFFF;border:1px solid #E4E1D8;border-radius:10px;padding:28px;">
+      <p style="margin:0 0 16px;font-size:20px;font-weight:bold;">Confirm your email for Mason's Study</p>
+      <p style="margin:0 0 20px;font-size:15px;line-height:1.5;">
+        Thanks for signing up. Confirm your email address to finish setting up your account.
+      </p>
+      <p style="margin:0 0 24px;">
+        <a
+          href="{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=signup&next=/onboarding"
+          style="display:inline-block;background:#0E7A6A;color:#FFFFFF;text-decoration:none;font-size:15px;font-weight:bold;padding:12px 20px;border-radius:10px;"
+          >Confirm my email</a
+        >
+      </p>
+      <p style="margin:0 0 8px;font-size:13px;line-height:1.5;color:#585E68;">
+        The link works on any device. If you didn't sign up for Mason's Study, you can ignore this email.
+      </p>
+    </div>
+  </body>
+</html>

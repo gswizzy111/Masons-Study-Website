@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { createServerClient } from "@supabase/ssr";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { publicEnv } from "@/lib/env";
+import { safeNextPath } from "@/lib/safe-next";
 
 /** Header proxy.ts sets on every page request: the current pathname. */
 export const PATHNAME_HEADER = "x-pathname";
@@ -52,12 +53,7 @@ export const getUser = cache(async (): Promise<User | null> => {
 });
 
 /** A same-site path that is safe to redirect to after sign-in, or null. */
-export function safeNextPath(value: string | null | undefined): string | null {
-  if (!value || !value.startsWith("/") || value.startsWith("//") || value.startsWith("/\\")) {
-    return null;
-  }
-  return value;
-}
+export { safeNextPath };
 
 /**
  * The signed-in user and a server client, or a redirect to

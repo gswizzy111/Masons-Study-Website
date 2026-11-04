@@ -269,9 +269,12 @@ export function submitAnswer(state: MeteorState, text: string): SubmitResult {
   if (!text.trim()) return { kind: "empty" };
   let target: Meteor | null = null;
   let close = false;
+  // Every card's answer: typing another card's answer is a mix-up, not a typo.
+  const answers = state.cards.map((c) => ({ id: c.id, text: answerOf(c, state.answerWith) }));
   for (const m of state.meteors) {
     if (m.landed) continue;
-    const grade = gradeAnswer(text, m.answer);
+    const others = answers.filter((a) => a.id !== m.cardId).map((a) => a.text);
+    const grade = gradeAnswer(text, m.answer, { others, side: state.answerWith });
     if (grade.correct) {
       if (!target || m.progress > target.progress) target = m;
     } else if (grade.close) {

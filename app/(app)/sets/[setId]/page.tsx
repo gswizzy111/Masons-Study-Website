@@ -14,6 +14,7 @@ import {
   Trophy,
   type LucideIcon,
 } from "lucide-react";
+import { aiConfigured } from "@/lib/env";
 import { requireUser } from "@/lib/supabase/server";
 import { summarize, summarizeByTopic, type MasterySummary } from "@/lib/mastery";
 import type { CardProgress, MasteryLevel, SetStatus } from "@/lib/types";
@@ -27,7 +28,7 @@ import { BuildPanel } from "@/components/sets/build-panel";
 import { LiveText } from "@/components/sets/live-text";
 import { MaterialsPanel, type MaterialRow } from "@/components/sets/materials-panel";
 import { SetJobProvider } from "@/components/sets/set-job-context";
-import { fetchAll, getSet } from "@/components/sets/server-data";
+import { fetchAll, getGuideState, getSet } from "@/components/sets/server-data";
 import { relativeText } from "@/components/sets/time-text";
 
 type CardRow = { id: string; topic_id: string | null };
@@ -41,7 +42,8 @@ export default async function SetOverviewPage({ params }: { params: Promise<{ se
   const set = await getSet(setId);
   if (!set) notFound();
 
-  const [cards, progress, materialsRes, attemptsRes, meteorRes, matchRes] = await Promise.all([
+  const [guide, cards, progress, materialsRes, attemptsRes, meteorRes, matchRes] = await Promise.all([
+    getGuideState(set.id),
     fetchAll<CardRow>((from, to) =>
       supabase
         .from("cards")
@@ -94,13 +96,22 @@ export default async function SetOverviewPage({ params }: { params: Promise<{ se
   const attempts = (attemptsRes.data ?? []) as AttemptRow[];
   const meteorBest = (meteorRes.data as ScoreRow | null) ?? null;
   const matchBest = (matchRes.data as ScoreRow | null) ?? null;
-  const built = set.topics.length > 0;
+  // "Built" means a guide exists (some section has text), not that topics
+  // were saved: the outline lands partway through the very first build.
+  const built = guide.writtenSections > 0;
+  const aiReady = aiConfigured();
   const base = `/sets/${set.id}`;
 
   return (
     <SetJobProvider setId={set.id} setStatus={set.status}>
       <PageContainer className="flex flex-col gap-6 pt-6 sm:pt-8">
-        <BuildPanel userId={user.id} materialCount={materials.length} built={built} />
+        <BuildPanel
+          userId={user.id}
+          materialCount={materials.length}
+          built={built}
+          failedSections={guide.failedSections}
+          aiReady={aiReady}
+        />
 
         <div className="@container">
           <div className="grid gap-6 @4xl:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]">
@@ -110,7 +121,7 @@ export default async function SetOverviewPage({ params }: { params: Promise<{ se
               <TopicsCard byTopic={byTopic} base={base} status={set.status} />
             </div>
             <div className="flex min-w-0 flex-col gap-6">
-              <MaterialsPanel materials={materials} userId={user.id} built={built} />
+              <MaterialsPanel materials={materials} userId={user.id} built={built} aiReady={aiReady} />
               <ScoresCard base={base} attempts={attempts} meteorBest={meteorBest} matchBest={matchBest} />
             </div>
           </div>
@@ -130,7 +141,7 @@ function ProgressCard({
   status: SetStatus;
 }) {
   const stats = [
-    { label: "Learned", value: summary.mastered, dot: "bg-mastered" },
+    { label: "Mastered", value: summary.mastered, dot: "bg-mastered" },
     { label: "Still learning", value: summary.learning, dot: "bg-learning" },
     { label: "Not studied", value: summary.not_studied, dot: "bg-not-studied" },
   ];
@@ -165,14 +176,14 @@ function ProgressCard({
               value={summary.percent}
               size={132}
               stroke={10}
-              label="Learned"
-              valueText={`${summary.percent}% learned`}
+              label="Mastered"
+              valueText={`${summary.percent}% mastered`}
             >
               <span className="flex flex-col items-center leading-none">
                 <span className="font-mono text-3xl font-medium tracking-tight text-ink tabular-nums">
                   {summary.percent}%
                 </span>
-                <span className="mt-1.5 text-xs text-ink-2">learned</span>
+                <span className="mt-1.5 text-xs text-ink-2">mastered</span>
               </span>
             </ProgressRing>
             <div className="flex w-full min-w-0 flex-1 flex-col gap-4">
@@ -197,7 +208,7 @@ function ProgressCard({
           <div className="mt-6 flex flex-col gap-3 border-t border-line pt-5 sm:flex-row sm:items-center sm:justify-between">
             <p className="flex items-center gap-2 text-[0.9375rem] text-ink">
               <RotateCcw
-                className={cn("size-4 shrink-0", summary.due > 0 ? "text-learning" : "text-ink-3")}
+                className={cn("size-4 shrink-0", summary.due > 0 ? "text-ink-2" : "text-ink-3")}
                 strokeWidth={1.75}
                 aria-hidden
               />
@@ -305,7 +316,7 @@ function TopicsCard({
               >
                 <div className="min-w-0 flex-1">
                   <h3 className="flex items-baseline gap-2.5 font-medium text-ink">
-                    <span aria-hidden className="w-5 shrink-0 font-mono text-sm text-ink-3 tabular-nums">
+                    <span aria-hidden className="w-5 shrink-0 font-mono text-sm text-ink-2 tabular-nums">
                       {isOther ? "" : String(i + 1).padStart(2, "0")}
                     </span>
                     <span className="min-w-0 break-words">{topic.title}</span>
@@ -323,22 +334,24 @@ function TopicsCard({
                     />
                     <span className="shrink-0 text-xs text-ink-2 tabular-nums">
                       {summary.total > 0
-                        ? `${summary.mastered}/${summary.total} learned`
+                        ? `${summary.mastered}/${summary.total} mastered`
                         : "No cards yet"}
                     </span>
                   </div>
                 </div>
                 {!isOther ? (
                   <div className="flex shrink-0 gap-2 pl-7.5 @2xl:pl-0">
-                    <Button asChild variant="outline" size="sm">
-                      <Link
-                        href={`${base}/learn?topic=${encodeURIComponent(topic.id)}`}
-                        aria-label={`Learn this topic: ${topic.title}`}
-                      >
-                        Learn this topic
-                      </Link>
-                    </Button>
-                    <Button asChild variant="ghost" size="sm">
+                    {summary.total > 0 ? (
+                      <Button asChild variant="outline" size="sm">
+                        <Link
+                          href={`${base}/learn?topic=${encodeURIComponent(topic.id)}`}
+                          aria-label={`Learn this topic: ${topic.title}`}
+                        >
+                          Learn this topic
+                        </Link>
+                      </Button>
+                    ) : null}
+                    <Button asChild variant={summary.total > 0 ? "ghost" : "outline"} size="sm">
                       <Link
                         href={`${base}/guide#${encodeURIComponent(topic.id)}`}
                         aria-label={`Read: ${topic.title}`}
@@ -405,7 +418,9 @@ function ScoresCard({
                     <span
                       className={cn(
                         "ml-2 inline-block w-11 text-right",
-                        pct >= 80 ? "text-accent-strong" : pct >= 60 ? "text-learning-strong" : "text-ink-2",
+                        // Accent marks a strong score; everything else stays ink
+                        // (amber means "still learning", red means an error).
+                        pct >= 80 ? "text-accent-strong" : "text-ink",
                       )}
                     >
                       {pct}%

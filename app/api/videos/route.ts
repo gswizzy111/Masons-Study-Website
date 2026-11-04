@@ -2,11 +2,19 @@
 // Returns saved video suggestions, or makes new ones: one search per topic
 // (Claude when connected, else a simple search by topic name), then YouTube
 // results when a key is set. Stays well under the 60 s function limit:
-// Claude is cut off at 28 s and each YouTube search at 10 s (run in parallel).
+// Claude is cut off at 28 s and each YouTube search at 10 s (6 at a time,
+// at most 12 topics, so two rounds).
+// Each YouTube search costs 100 of the default 10,000 daily quota units, so
+// searches are limited: at most MAX_TOPICS per request, a refresh of the same
+// topic at most every 10 minutes, and a per-user daily budget.
 import { createClient, getUser } from "@/lib/supabase/server";
 import { aiConfigured, youtubeConfigured } from "@/lib/env";
 import { friendlyAiError } from "@/lib/ai/client";
+import { MAX_TOPICS } from "@/lib/ai/prompts";
+import { runPool } from "@/lib/ai/schemas";
+import { sanitizeTopics } from "@/lib/ai/set-context";
 import { fallbackVideoQuery, suggestVideoQueries, type VideoQuery } from "@/lib/ai/videos";
+import { takeQuota } from "@/lib/usage-limits";
 import { searchYouTube, YouTubeError } from "@/lib/youtube";
 import type { LearningProfile, Topic, VideoResult, VideoSuggestion } from "@/lib/types";
 import {
@@ -23,9 +31,15 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const CLAUDE_DEADLINE_MS = 28_000;
 const MAX_TOPIC_IDS = 100;
 const VIDEOS_PER_TOPIC = 4;
+/** YouTube searches running at once. */
+const SEARCH_CONCURRENCY = 6;
+/** A topic's videos can be refreshed again after this long. */
+const REFRESH_COOLDOWN_MS = 10 * 60_000;
 
-function fail(status: number, error: string) {
-  return Response.json({ error }, { status, headers: { "cache-control": "no-store" } });
+function fail(status: number, error: string, retryAfterSeconds?: number) {
+  const headers: Record<string, string> = { "cache-control": "no-store" };
+  if (retryAfterSeconds) headers["retry-after"] = String(Math.ceil(retryAfterSeconds));
+  return Response.json({ error }, { status, headers });
 }
 
 function ok(body: VideosResponse) {
@@ -84,8 +98,14 @@ export async function POST(request: Request) {
   if (setError) return fail(500, "Couldn't load this study set. Try again.");
   if (!set) return fail(404, "Study set not found.");
 
-  const setTitle = typeof set.title === "string" ? set.title : "";
-  const allTopics = normalizeTopics(set.topics);
+  const setTitle = typeof set.title === "string" ? set.title.slice(0, 200) : "";
+  // Users can write study_sets.topics directly: at most MAX_TOPICS, clipped,
+  // the same ids normalizeTopics keeps for the page.
+  const clipped = new Map(sanitizeTopics(set.topics).map((t) => [t.id, t] as const));
+  const allTopics = normalizeTopics(set.topics)
+    .filter((t) => clipped.has(t.id))
+    .slice(0, MAX_TOPICS)
+    .map((t) => clipped.get(t.id) ?? t);
   const ytOn = youtubeConfigured();
   const aiOn = aiConfigured();
 
@@ -114,15 +134,29 @@ export async function POST(request: Request) {
   }
 
   // Without refresh, only topics never searched (or searched before YouTube
-  // was connected, so they have no videos yet) are looked up.
+  // was connected, so they have no videos yet) are looked up. A refresh
+  // skips topics searched in the last few minutes.
   const latest = latestByTopic(existing);
+  const now = Date.now();
+  const fresh = (t: Topic) => {
+    const row = latest.get(t.id);
+    return Boolean(row && now - new Date(row.created_at).getTime() < REFRESH_COOLDOWN_MS);
+  };
   const targets: Topic[] = refresh
-    ? requested
+    ? requested.filter((t) => !fresh(t))
     : requested.filter((t) => {
         const row = latest.get(t.id);
         return !row || (ytOn && (!Array.isArray(row.videos) || row.videos.length === 0));
       });
-  if (targets.length === 0) return respond(existing);
+  if (targets.length === 0) {
+    return respond(existing, refresh ? "These were just refreshed. Try again in a few minutes." : null);
+  }
+
+  // Per-user budget: one unit per topic searched (Claude and YouTube calls).
+  if (aiOn || ytOn) {
+    const quota = await takeQuota(supabase, "videos", targets.length);
+    if (!quota.ok) return fail(quota.status, quota.message, quota.retryAfterSeconds);
+  }
 
   // 1. One search per topic.
   let notice: string | null = null;
@@ -154,13 +188,22 @@ export async function POST(request: Request) {
     queries = targets.map((t) => fallbackVideoQuery(t, setTitle));
   }
 
-  // 2. YouTube results, all topics in parallel. null = that search failed.
+  // 2. YouTube results, a few at a time. null = that search failed.
   const videosByTopic = new Map<string, VideoResult[] | null>();
   let youtubeError: string | null = null;
   if (ytOn) {
-    const results = await Promise.allSettled(
-      queries.map((q) => searchYouTube(q.query, { maxResults: VIDEOS_PER_TOPIC })),
-    );
+    const results: PromiseSettledResult<VideoResult[]>[] = queries.map(() => ({
+      status: "rejected",
+      reason: null,
+    }));
+    await runPool(queries, SEARCH_CONCURRENCY, async (q, i, started) => {
+      started();
+      try {
+        results[i] = { status: "fulfilled", value: await searchYouTube(q.query, { maxResults: VIDEOS_PER_TOPIC }) };
+      } catch (reason) {
+        results[i] = { status: "rejected", reason };
+      }
+    });
     results.forEach((result, i) => {
       const topicId = queries[i].topic_id;
       if (result.status === "fulfilled") {

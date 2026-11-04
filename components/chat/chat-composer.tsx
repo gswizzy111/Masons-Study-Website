@@ -16,6 +16,8 @@ type ChatComposerProps = {
   onStop: () => void;
   /** An answer is streaming: the button stops it instead of sending. */
   busy: boolean;
+  /** Claude isn't connected: the box and the send button are off. */
+  disabled?: boolean;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
 };
 
@@ -24,13 +26,21 @@ type ChatComposerProps = {
  * sends, Shift+Enter adds a line, and while an answer streams the send
  * button becomes Stop.
  */
-export function ChatComposer({ value, onChange, onSend, onStop, busy, textareaRef }: ChatComposerProps) {
+export function ChatComposer({
+  value,
+  onChange,
+  onSend,
+  onStop,
+  busy,
+  disabled = false,
+  textareaRef,
+}: ChatComposerProps) {
   const inputId = useId();
   const hintId = useId();
   const counterId = useId();
   const length = value.length;
   const tooLong = length > CHAT_MESSAGE_MAX;
-  const canSend = !busy && value.trim().length > 0 && !tooLong;
+  const canSend = !busy && !disabled && value.trim().length > 0 && !tooLong;
 
   // Grow with the text (field-sizing isn't everywhere yet).
   useLayoutEffect(() => {
@@ -63,6 +73,7 @@ export function ChatComposer({ value, onChange, onSend, onStop, busy, textareaRe
       <div
         className={cn(
           "flex items-end gap-2 rounded-lg border border-line bg-surface p-1.5 pl-3 shadow-xs",
+          disabled && "bg-surface-2 shadow-none",
           "transition-[border-color,box-shadow] duration-150 ease-out",
           "hover:border-line-strong",
           "focus-within:border-accent focus-within:outline-2 focus-within:outline-offset-0 focus-within:outline-accent/35",
@@ -79,7 +90,8 @@ export function ChatComposer({ value, onChange, onSend, onStop, busy, textareaRe
           value={value}
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={onKeyDown}
-          placeholder="Ask about this set"
+          placeholder={disabled ? "Claude is not connected yet" : "Ask about this set"}
+          disabled={disabled}
           enterKeyHint="send"
           autoComplete="off"
           spellCheck
@@ -88,7 +100,7 @@ export function ChatComposer({ value, onChange, onSend, onStop, busy, textareaRe
           className={cn(
             "max-h-48 min-h-9 flex-1 resize-none self-center bg-transparent py-1.5 text-base leading-normal text-ink",
             "placeholder:text-ink-placeholder sm:text-[0.9375rem]",
-            "focus-visible:outline-none",
+            "focus-visible:outline-none disabled:cursor-not-allowed",
           )}
         />
         {/* Keyed so Stop and Send are separate elements: a click on Stop must
@@ -119,7 +131,7 @@ export function ChatComposer({ value, onChange, onSend, onStop, busy, textareaRe
         )}
       </div>
       <div className="mt-1.5 flex items-center justify-between gap-3 px-1 text-xs text-ink-2">
-        <p id={hintId} className="max-sm:sr-only">
+        <p id={hintId} className={cn("max-sm:sr-only", disabled && "invisible")}>
           Enter to send, Shift+Enter for a new line
         </p>
         {length >= COUNTER_FROM ? (

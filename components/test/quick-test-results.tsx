@@ -2,8 +2,8 @@
 
 import { useId, useState } from "react";
 import Link from "next/link";
-import { Brain, Check, CircleAlert, CircleCheck, RotateCcw, X } from "lucide-react";
-import type { GradedItem, TestQuestion } from "@/lib/learn/quick-test";
+import { Brain, Check, CircleAlert, CircleCheck, RotateCcw, Undo2, X } from "lucide-react";
+import { canOverride, type GradedItem, type TestQuestion } from "@/lib/learn/quick-test";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,12 +22,24 @@ function verdict(percent: number): string {
   return "A starting point. Learn will take you through the misses step by step.";
 }
 
+function savedText(missed: number, retake: boolean, canRemark: boolean): string {
+  if (retake) return "Saved. On a retake only misses change your progress, since you just saw the answers.";
+  const remark = canRemark ? " You can re-mark written answers below until you leave this page." : "";
+  if (missed > 0) return `Saved. Missed cards go back to still learning, so Learn brings them up first.${remark}`;
+  return `Saved. Written answers move cards furthest: only they can master a card.${remark}`;
+}
+
 /** Score, save status and a per-question review of a quick test. */
 export function QuickTestResults({
   setId,
   questions,
   graded,
   saveState,
+  retake = false,
+  overrides = {},
+  onOverride,
+  onStudyMisses,
+  leaving = false,
   onRetake,
   onNewTest,
 }: {
@@ -35,15 +47,26 @@ export function QuickTestResults({
   questions: readonly TestQuestion[];
   graded: readonly GradedItem[];
   saveState: SaveState;
+  /** These questions were just retaken. */
+  retake?: boolean;
+  /** Written answers the student re-marked: question key -> counts as right. */
+  overrides?: Readonly<Record<string, boolean>>;
+  /** Re-marks a written answer (null clears the mark). */
+  onOverride?: (questionKey: string, value: boolean | null) => void;
+  /** Saves what is waiting, then opens Learn. Without it, a plain link. */
+  onStudyMisses?: () => void;
+  leaving?: boolean;
   onRetake: () => void;
   onNewTest: () => void;
 }) {
   const id = useId();
   const [filter, setFilter] = useState<"all" | "missed">("all");
+  const isRight = (g: GradedItem) => (canOverride(g) ? (overrides[g.questionKey] ?? g.correct) : g.correct);
   const total = graded.length;
-  const score = graded.filter((g) => g.correct).length;
+  const score = graded.filter(isRight).length;
   const missed = total - score;
   const percent = total > 0 ? Math.round((100 * score) / total) : 0;
+  const canRemark = Boolean(onOverride) && graded.some(canOverride);
 
   const byQuestion = new Map<string, GradedItem[]>();
   for (const g of graded) {
@@ -59,7 +82,7 @@ export function QuickTestResults({
     number += items.length;
     return { q, items, first };
   });
-  const visible = filter === "missed" ? rows.filter((r) => r.items.some((i) => !i.correct)) : rows;
+  const visible = filter === "missed" ? rows.filter((r) => r.items.some((i) => !isRight(i))) : rows;
 
   return (
     <div className="flex flex-col gap-6">
@@ -69,7 +92,7 @@ export function QuickTestResults({
             value={percent}
             size={96}
             stroke={8}
-            tone={percent >= 70 ? "accent" : "learning"}
+            tone={percent >= 80 ? "accent" : "ink"}
             label="Score"
             valueText={`${percent}%`}
           >
@@ -89,12 +112,7 @@ export function QuickTestResults({
               ) : saveState === "saved" ? (
                 <>
                   <CircleCheck className="mt-0.5 size-4 shrink-0 text-accent" strokeWidth={1.75} aria-hidden />
-                  <span>
-                    Saved.{" "}
-                    {missed > 0
-                      ? "Missed cards are back to still learning, so Learn brings them up first."
-                      : "Every card here moved up in your progress."}
-                  </span>
+                  <span>{savedText(missed, retake, canRemark)}</span>
                 </>
               ) : saveState === "error" ? (
                 <>
@@ -107,7 +125,15 @@ export function QuickTestResults({
         </div>
         <div className="flex flex-col gap-2 border-t border-line bg-surface-2/50 px-5 py-4 sm:flex-row sm:flex-wrap sm:items-center sm:px-7">
           <Button asChild variant={missed > 0 ? "primary" : "outline"}>
-            <Link href={`/sets/${setId}/learn`}>
+            <Link
+              href={`/sets/${setId}/learn`}
+              aria-disabled={leaving || undefined}
+              onClick={(e) => {
+                if (!onStudyMisses) return;
+                e.preventDefault();
+                onStudyMisses();
+              }}
+            >
               <Brain strokeWidth={1.75} aria-hidden />
               {missed > 0 ? "Study the misses in Learn" : "Go to Learn"}
             </Link>
@@ -147,7 +173,13 @@ export function QuickTestResults({
           <ol className="flex flex-col gap-3">
             {visible.map(({ q, items, first }) => (
               <li key={q.key}>
-                <ReviewCard question={q} items={items} number={first} />
+                <ReviewCard
+                  question={q}
+                  items={items}
+                  number={first}
+                  overrides={overrides}
+                  onOverride={onOverride}
+                />
               </li>
             ))}
           </ol>
@@ -189,7 +221,19 @@ function AnswerLine({ label, text, tone }: { label: string; text: string; tone: 
   );
 }
 
-function ReviewCard({ question: q, items, number }: { question: TestQuestion; items: GradedItem[]; number: number }) {
+function ReviewCard({
+  question: q,
+  items,
+  number,
+  overrides,
+  onOverride,
+}: {
+  question: TestQuestion;
+  items: GradedItem[];
+  number: number;
+  overrides: Readonly<Record<string, boolean>>;
+  onOverride?: (questionKey: string, value: boolean | null) => void;
+}) {
   const allRight = items.every((i) => i.correct);
 
   if (q.type === "matching") {
@@ -229,6 +273,10 @@ function ReviewCard({ question: q, items, number }: { question: TestQuestion; it
 
   const g = items[0];
   if (!g) return null;
+  const marked = canOverride(g) ? overrides[g.questionKey] : undefined;
+  const right = marked ?? g.correct;
+  // Written answers can be re-marked: a paraphrase that is right, or a "typo" that was another word.
+  const remark = onOverride && canOverride(g) ? onOverride : null;
 
   return (
     <Card variant="flat" className="px-4 py-4 sm:px-6 sm:py-5">
@@ -259,17 +307,46 @@ function ReviewCard({ question: q, items, number }: { question: TestQuestion; it
             <AnswerLine
               label="Your answer"
               text={g.blank ? "No answer" : g.given}
-              tone={g.correct ? "right" : "wrong"}
+              tone={right ? "right" : "wrong"}
             />
             {!g.correct ? <AnswerLine label="Correct answer" text={g.expected} tone="plain" /> : null}
+            {g.correct && g.typo ? <AnswerLine label="Spelled" text={g.expected} tone="plain" /> : null}
             {q.type === "tf" && !q.isTrue ? (
               <AnswerLine label="Its definition" text={q.definition} tone="plain" />
             ) : null}
           </dl>
+
+          {remark ? (
+            <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+              {marked === undefined ? (
+                <Button variant="outline" size="sm" onClick={() => remark(g.questionKey, !g.correct)}>
+                  {g.correct ? (
+                    <>
+                      <X strokeWidth={1.75} aria-hidden />I was wrong
+                    </>
+                  ) : (
+                    <>
+                      <Check strokeWidth={1.75} aria-hidden />I was right
+                    </>
+                  )}
+                </Button>
+              ) : (
+                <>
+                  <p className="text-sm text-ink-2" role="status">
+                    {marked ? "You marked this right." : "You marked this wrong."}
+                  </p>
+                  <Button variant="ghost" size="sm" onClick={() => remark(g.questionKey, null)}>
+                    <Undo2 strokeWidth={1.75} aria-hidden />
+                    Undo
+                  </Button>
+                </>
+              )}
+            </div>
+          ) : null}
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1.5">
-          <Mark correct={g.correct} />
-          {g.close ? <Badge variant="learning">Almost</Badge> : null}
+          <Mark correct={right} />
+          {g.close && marked === undefined ? <Badge variant="learning">Almost</Badge> : null}
         </div>
       </div>
     </Card>

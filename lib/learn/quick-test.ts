@@ -95,6 +95,31 @@ function matchingGroups(n: number): number[] {
   return Array.from({ length: groups }, (_, i) => base + (i < extra ? 1 : 0));
 }
 
+/**
+ * Splits cards into matching groups of 3-5 where no two cards share a term
+ * or a definition (two equal definitions would have two right terms). Cards
+ * that can't be placed are returned in `rest`.
+ */
+function matchingSets(cards: readonly LearnCard[]): { groups: LearnCard[][]; rest: LearnCard[] } {
+  const sizes = matchingGroups(cards.length);
+  const groups: LearnCard[][] = sizes.map(() => []);
+  const keys = sizes.map(() => new Set<string>());
+  const rest: LearnCard[] = [];
+  for (const card of cards) {
+    const own = [`t:${normalizeAnswer(card.term)}`, `d:${normalizeAnswer(card.definition)}`];
+    const at = groups.findIndex((g, i) => g.length < sizes[i] && own.every((k) => !keys[i].has(k)));
+    if (at === -1) {
+      rest.push(card);
+      continue;
+    }
+    groups[at].push(card);
+    for (const k of own) keys[at].add(k);
+  }
+  const full = groups.filter((g) => g.length >= MATCH_MIN);
+  for (const g of groups) if (g.length < MATCH_MIN) rest.push(...g);
+  return { groups: full, rest };
+}
+
 let seq = 0;
 const nextKey = (prefix: string) => {
   seq += 1;
@@ -154,10 +179,8 @@ export function buildQuickTest(
     const cards = take(n);
 
     if (type === "matching") {
-      let i = 0;
-      for (const size of matchingGroups(cards.length)) {
-        const group = cards.slice(i, i + size);
-        i += size;
+      const { groups, rest: leftOver } = matchingSets(cards);
+      for (const group of groups) {
         questions.push({
           type: "matching",
           key: nextKey("match"),
@@ -168,7 +191,7 @@ export function buildQuickTest(
           ),
         });
       }
-      for (const c of cards.slice(i)) questions.push(writtenQuestion(c, options.answerWith));
+      for (const c of leftOver) questions.push(writtenQuestion(c, options.answerWith));
       continue;
     }
 
@@ -235,6 +258,8 @@ export type GradedItem = {
   correct: boolean;
   /** Written only: a near miss. */
   close?: boolean;
+  /** Written only: right, but not spelled exactly. */
+  typo?: boolean;
   /** What they answered, as text ("" when blank). */
   given: string;
   /** The right answer, as text. */
@@ -257,8 +282,15 @@ export function isAnswered(q: TestQuestion, responses: TestResponses): boolean {
   }
 }
 
-/** Grades every item of a test. */
-export function gradeQuickTest(questions: readonly TestQuestion[], responses: TestResponses): GradedItem[] {
+/**
+ * Grades every item of a test. `pool` (the set's cards) lets a written
+ * answer that is really another card's answer count as wrong, not as a typo.
+ */
+export function gradeQuickTest(
+  questions: readonly TestQuestion[],
+  responses: TestResponses,
+  pool: readonly LearnCard[] = [],
+): GradedItem[] {
   const out: GradedItem[] = [];
   for (const q of questions) {
     const r = responses[q.key];
@@ -291,13 +323,16 @@ export function gradeQuickTest(questions: readonly TestQuestion[], responses: Te
       }
       case "written": {
         const text = typeof r === "string" ? r.trim() : "";
-        const grade = text ? gradeAnswer(text, q.answer) : { correct: false, close: false };
+        const side = q.promptSide === "term" ? "definition" : "term";
+        const others = pool.filter((c) => c.id !== q.cardId).map((c) => (side === "term" ? c.term : c.definition));
+        const grade = text ? gradeAnswer(text, q.answer, { others, side }) : { correct: false, close: false, similarity: 0 };
         out.push({
           questionKey: q.key,
           type: "written",
           cardId: q.cardId,
           correct: grade.correct,
           close: grade.close,
+          typo: grade.correct && grade.similarity < 1,
           given: text,
           expected: q.answer,
           blank: !text,
@@ -324,4 +359,24 @@ export function gradeQuickTest(questions: readonly TestQuestion[], responses: Te
     }
   }
   return out;
+}
+
+/**
+ * What a graded item does to the card's progress, as an answer mode, or
+ * null when it should not count:
+ * - blank: nothing (submitting early is not a wrong answer);
+ * - true or false: only a miss counts (a right guess is a coin flip);
+ * - multiple choice and matching: like Learn's multiple choice, never past familiar;
+ * - written: a full recall, like Learn's written questions;
+ * - on a retake, only misses count (the answers were just shown).
+ */
+export function progressModeFor(item: GradedItem, retake = false): "mc" | "test" | null {
+  if (item.blank) return null;
+  if (item.correct && (retake || item.type === "tf")) return null;
+  return item.type === "written" ? "test" : "mc";
+}
+
+/** A written answer the student can still correct by hand ("I was right" / "I was wrong"). */
+export function canOverride(item: GradedItem): boolean {
+  return item.type === "written" && !item.blank && (!item.correct || item.typo === true);
 }

@@ -42,10 +42,13 @@ export function MaterialsPanel({
   materials,
   userId,
   built,
+  aiReady = true,
 }: {
   materials: MaterialRow[];
   userId: string;
   built: boolean;
+  /** Claude is configured (passed on to Add material). */
+  aiReady?: boolean;
 }) {
   const router = useRouter();
   const { setId, active } = useSetJob();
@@ -95,6 +98,7 @@ export function MaterialsPanel({
           setId={setId}
           userId={userId}
           built={built}
+          aiReady={aiReady}
           trigger={
             <Button variant="outline" size="sm">
               <FilePlus2 strokeWidth={1.75} aria-hidden />
@@ -139,6 +143,9 @@ export function MaterialsPanel({
                       <CircleAlert className="mt-0.5 size-3.5 shrink-0" strokeWidth={1.75} aria-hidden />
                       {m.error || "Claude couldn't read this file. Try another format, or remove it."}
                     </p>
+                  ) : m.status === "ready" && m.error ? (
+                    /* A note about parts that couldn't be read (picture pages, a long scan). */
+                    <p className="mt-1 text-[0.8125rem] leading-snug text-ink-2">{m.error}</p>
                   ) : null}
                 </div>
                 <WithTooltip label={active ? "Wait for the build to finish" : "Delete"}>

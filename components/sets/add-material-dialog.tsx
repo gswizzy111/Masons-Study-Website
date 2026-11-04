@@ -18,8 +18,10 @@ import { insertNotesMaterial } from "@/components/sets/upload-material";
 type Props = {
   setId: string;
   userId: string;
-  /** The set has been built before (it has topics), so a new build updates it. */
+  /** The set has a study guide from an earlier build, so a new build updates it. */
   built: boolean;
+  /** Claude is configured. Without it the material is saved but no build is offered. */
+  aiReady?: boolean;
   /** The button that opens the dialog. */
   trigger: ReactNode;
 };
@@ -28,7 +30,7 @@ type Props = {
  * "Add material" for an existing set: upload files and/or paste notes, then
  * offer to update the study guide with them.
  */
-export function AddMaterialDialog({ setId, userId, built, trigger }: Props) {
+export function AddMaterialDialog({ setId, userId, built, aiReady = true, trigger }: Props) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [session, setSession] = useState(0);
@@ -49,6 +51,7 @@ export function AddMaterialDialog({ setId, userId, built, trigger }: Props) {
         setId={setId}
         userId={userId}
         built={built}
+        aiReady={aiReady}
         onBusyChange={setBusy}
         onClose={() => setOpen(false)}
       />
@@ -60,12 +63,14 @@ function AddMaterialBody({
   setId,
   userId,
   built,
+  aiReady,
   onBusyChange,
   onClose,
 }: {
   setId: string;
   userId: string;
   built: boolean;
+  aiReady: boolean;
   onBusyChange: (busy: boolean) => void;
   onClose: () => void;
 }) {
@@ -141,20 +146,24 @@ function AddMaterialBody({
         <div className="flex items-start gap-3 rounded-md bg-accent-soft p-4 text-sm leading-relaxed text-ink">
           <CircleCheck className="mt-0.5 size-4 shrink-0 text-accent-strong" strokeWidth={1.75} aria-hidden />
           <p>
-            {built
-              ? "Update the study guide so Claude reads the new material. Your cards and progress stay; new cards are added for anything new."
-              : "Build the set so Claude can write the study guide and flashcards."}
+            {!aiReady
+              ? "It's saved. Claude isn't connected to this site yet, so the study guide can be built or updated once it is."
+              : built
+                ? "Update the study guide so Claude reads the new material. Your cards and progress stay; new cards are added for anything new."
+                : "Build the set so Claude can write the study guide and flashcards."}
           </p>
         </div>
         <DialogFooter>
           <DialogClose asChild>
-            <Button variant="ghost" type="button">
-              Later
+            <Button variant={aiReady ? "ghost" : "primary"} type="button">
+              {aiReady ? "Later" : "Done"}
             </Button>
           </DialogClose>
-          <Button type="button" onClick={onBuild} loading={starting}>
-            {built ? "Update study guide" : "Build the set"}
-          </Button>
+          {aiReady ? (
+            <Button type="button" onClick={onBuild} loading={starting}>
+              {built ? "Update study guide" : "Build the set"}
+            </Button>
+          ) : null}
         </DialogFooter>
       </DialogContent>
     );

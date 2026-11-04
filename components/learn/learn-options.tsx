@@ -29,7 +29,7 @@ function fromScopeValue(value: string): Pick<LearnOptions, "scope" | "topicId"> 
 
 const TYPE_OPTIONS = [
   { value: "mixed", label: "Mixed" },
-  { value: "mc", label: "Multiple choice" },
+  { value: "mc", label: "Choices" },
   { value: "written", label: "Written" },
 ] as const satisfies ReadonlyArray<{ value: QuestionTypes; label: string }>;
 
@@ -40,7 +40,7 @@ const ANSWER_OPTIONS = [
 
 const TYPE_HINTS: Record<QuestionTypes, string> = {
   mixed: "Starts with multiple choice, then switches to written as you learn each card.",
-  mc: "Only multiple choice. Quicker, but cards stop at familiar until you write them.",
+  mc: "Only multiple choice. Quicker, but cards stop at familiar until you write the answers.",
   written: "Only written answers. Slower, and the fastest way to mastered.",
 };
 

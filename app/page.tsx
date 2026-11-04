@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import type { Components } from "react-markdown";
 import {
   BookOpenText,
   Check,
@@ -36,6 +37,21 @@ const EXAMPLE_GUIDE = `### Regulating glycolysis
 | Hexokinase | Most tissues | Inhibited by glucose 6-phosphate |
 | Glucokinase | Liver, pancreatic β cells | Induced by insulin |
 `;
+
+/* The example's title looks like a guide heading but isn't one: the
+   preview is an illustration, and a real h3 here would jump from the page's
+   h1 straight to h3. */
+const EXAMPLE_COMPONENTS: Components = {
+  h3({ node: _node, ...props }) {
+    void _node;
+    return (
+      <p
+        {...props}
+        className="mb-2 font-display text-base leading-[1.3] font-semibold tracking-[-0.01em] text-balance text-ink"
+      />
+    );
+  },
+};
 
 const EXAMPLE_SET: MasterySummary = {
   total: 48,
@@ -171,7 +187,7 @@ function Hero() {
               <Badge variant="outline">Exam 2: Metabolism</Badge>
             </div>
             <div className="px-5 py-5 sm:px-6 sm:py-6">
-              <Markdown compact className="[&_table]:min-w-[20rem]">
+              <Markdown compact className="[&_table]:min-w-[20rem]" components={EXAMPLE_COMPONENTS}>
                 {EXAMPLE_GUIDE}
               </Markdown>
             </div>
@@ -271,7 +287,7 @@ function Features() {
               <ol className="divide-y divide-line overflow-hidden rounded-md border border-line bg-surface">
                 {EXAMPLE_TOPICS.map((t, i) => (
                   <li key={t.title} className="flex items-center gap-4 px-4 py-3">
-                    <span className="w-5 shrink-0 font-mono text-sm text-ink-3 tabular-nums">
+                    <span className="w-5 shrink-0 font-mono text-sm text-ink-2 tabular-nums">
                       {i + 1}
                     </span>
                     <span className="min-w-0 flex-1 truncate text-[0.9375rem] font-medium text-ink">
@@ -380,7 +396,7 @@ function Features() {
           <Feature
             icon={<Gamepad2 strokeWidth={1.75} />}
             title="Two quick games"
-            className="bg-learning-soft lg:col-span-4"
+            className="bg-surface-2 lg:col-span-4"
           >
             Meteor: type the answer before it lands. Match: pair terms with definitions against the
             clock. Both use your cards.

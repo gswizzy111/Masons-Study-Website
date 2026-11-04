@@ -40,6 +40,7 @@ export const REQUEUE_GAP = 3;
 /** How many times one card can come back in a single round. */
 export const MAX_RETRIES_PER_ROUND = 2;
 export const OTHER_TOPIC_ID = "other";
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 export type LearnCard = Pick<Card, "id" | "term" | "definition" | "topic_id" | "starred"> & {
   hint?: string | null;
@@ -142,8 +143,9 @@ export function priorityOf(p: LearnProgress | undefined, now: Date = new Date())
 
 /**
  * The cards for the next round, at most `size`, by priority. Due reviews
- * come oldest-due first; learning cards least recently seen first; new
- * cards in set order.
+ * come oldest-due first (ties: mastered, then still learning, then
+ * familiar); learning cards least recently seen first; new cards in set
+ * order.
  */
 export function selectRoundCards<C extends LearnCard>(
   scopeCards: readonly C[],
@@ -159,20 +161,28 @@ export function selectRoundCards<C extends LearnCard>(
     if (pr !== null) buckets[pr].push(card);
   }
 
+  // When each due card became due: a mastered card at its due_at, a
+  // learning card a day after it was last seen (see isDue in lib/mastery).
   const dueKey = (c: C) => {
     const p = progress.get(c.id);
-    return levelOf(p) === 3 ? timeOf(p?.due_at, 0) : timeOf(p?.last_seen_at, 0);
+    return levelOf(p) === 3 ? timeOf(p?.due_at, 0) : timeOf(p?.last_seen_at, 0) + DAY_MS;
   };
   const seenKey = (c: C) => timeOf(progress.get(c.id)?.last_seen_at, 0);
+  // Ties among due cards: mastered reviews keep their schedule, then the
+  // weaker learning card (still learning before familiar).
+  const levelKey = (c: C) => {
+    const level = levelOf(progress.get(c.id));
+    return level === 3 ? 0 : level;
+  };
 
-  const sortStable = (list: C[], key: (c: C) => number) =>
+  const sortStable = (list: C[], key: (c: C) => number, tie: (c: C) => number = () => 0) =>
     list
-      .map((c, i) => ({ c, i, k: key(c) }))
-      .sort((a, b) => a.k - b.k || a.i - b.i)
+      .map((c, i) => ({ c, i, k: key(c), t: tie(c) }))
+      .sort((a, b) => a.k - b.k || a.t - b.t || a.i - b.i)
       .map((x) => x.c);
 
   const ordered = [
-    ...sortStable(buckets[0], dueKey),
+    ...sortStable(buckets[0], dueKey, levelKey),
     ...sortStable(buckets[1], seenKey),
     ...sortStable(buckets[2], seenKey),
     ...buckets[3],
@@ -219,9 +229,16 @@ function answerTextOf(card: LearnCard, answerWith: AnswerWith): string {
   return answerWith === "term" ? card.term : card.definition;
 }
 
+function sameKey(text: string): string {
+  return normalizeAnswer(text) || text.trim().toLowerCase();
+}
+
 /**
  * Up to `count` wrong options for a card: unique, never equal to the
  * answer (after normalizing), from the same topic first, then the rest.
+ * A card whose prompt side is the same as this card's ("ATP: energy
+ * currency" and "GTP: energy currency") is never used: its answer would
+ * be right too.
  */
 export function pickDistractors(
   card: LearnCard,
@@ -231,11 +248,14 @@ export function pickDistractors(
   rng: Rng = Math.random,
 ): string[] {
   const answer = answerTextOf(card, answerWith);
-  const used = new Set<string>([normalizeAnswer(answer) || answer.trim().toLowerCase()]);
+  const promptWith: AnswerWith = answerWith === "term" ? "definition" : "term";
+  const promptKey = sameKey(answerTextOf(card, promptWith));
+  const used = new Set<string>([sameKey(answer)]);
   const sameTopic: LearnCard[] = [];
   const others: LearnCard[] = [];
   for (const c of pool) {
     if (c.id === card.id) continue;
+    if (sameKey(answerTextOf(c, promptWith)) === promptKey) continue;
     if (card.topic_id && c.topic_id === card.topic_id) sameTopic.push(c);
     else others.push(c);
   }
@@ -244,7 +264,7 @@ export function pickDistractors(
   for (const c of [...shuffle(sameTopic, rng), ...shuffle(others, rng)]) {
     if (out.length >= count) break;
     const text = answerTextOf(c, answerWith).trim();
-    const key = normalizeAnswer(text) || text.toLowerCase();
+    const key = sameKey(text);
     if (!text || used.has(key)) continue;
     used.add(key);
     out.push(text);

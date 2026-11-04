@@ -21,8 +21,11 @@ import { CourseChip } from "@/components/sets/course-chip";
 import { LiveText } from "@/components/sets/live-text";
 import { SetActions } from "@/components/sets/set-actions";
 import { SetStatusBadge } from "@/components/sets/set-status-badge";
-import { AskClaudeButton, SetWorkspace } from "@/components/sets/set-workspace";
-import { getCourses, getSet } from "@/components/sets/server-data";
+import { SetHeader } from "@/components/sets/set-header";
+import { SetWorkspace } from "@/components/sets/set-workspace";
+import { getCourses, getGuideState, getSet } from "@/components/sets/server-data";
+import type { ChatGrounding } from "@/components/chat/chat-panel";
+import { aiConfigured } from "@/lib/env";
 import { examCountdownText, examUrgency, formatExamDate } from "@/components/sets/time-text";
 import { cn } from "@/lib/utils";
 
@@ -30,7 +33,8 @@ type Params = Promise<{ setId: string }>;
 
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
   const { setId } = await params;
-  const set = await getSet(setId).catch(() => null);
+  const set = await getSet(setId).catch(() => undefined);
+  if (set === null) return { title: "Set not found" };
   return { title: set?.title ?? "Study set" };
 }
 
@@ -59,79 +63,72 @@ export default async function SetLayout({
 }) {
   const { setId } = await params;
   const { supabase, user } = await requireUser();
-  const [set, courses] = await Promise.all([getSet(setId), getCourses(supabase)]);
+  const [set, courses, guide] = await Promise.all([
+    getSet(setId),
+    getCourses(supabase),
+    getGuideState(setId),
+  ]);
   if (!set) notFound();
 
   const urgency = examUrgency(set.exam_date);
+  const grounding: ChatGrounding =
+    guide.writtenSections > 0 ? "guide" : guide.readyMaterials > 0 ? "material" : "none";
 
   return (
     <ChatProvider setId={set.id}>
-      <SetWorkspace setId={set.id} setTitle={set.title}>
-        <div data-print-hide className="border-b border-line">
-          <div className="mx-auto w-full max-w-7xl px-4 pt-5 sm:px-6 sm:pt-7 lg:px-8">
-            <nav aria-label="Breadcrumb">
-              <Link
-                href="/dashboard"
-                className="-ml-1 inline-flex items-center gap-1 rounded-sm px-1 py-0.5 text-sm text-ink-2 transition-colors duration-150 hover:text-ink"
-              >
-                <ChevronLeft className="size-4" strokeWidth={1.75} aria-hidden />
-                Dashboard
-              </Link>
-            </nav>
-
-            <div className="mt-3 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-              <div className="min-w-0">
-                {set.course || set.exam_date || set.status !== "ready" ? (
-                  <div className="mb-2.5 flex flex-wrap items-center gap-x-3 gap-y-2">
-                    {set.course ? <CourseChip course={set.course} /> : null}
-                    <SetStatusBadge status={set.status} />
-                    {set.exam_date ? (
-                      <span
-                        className={cn(
-                          "inline-flex items-center gap-1.5 text-sm",
-                          urgency === "soon" ? "font-medium text-learning-strong" : "text-ink-2",
-                        )}
-                      >
-                        <CalendarClock className="size-4 shrink-0" strokeWidth={1.75} aria-hidden />
-                        <LiveText
-                          kind="exam"
-                          value={set.exam_date}
-                          serverText={examCountdownText(set.exam_date)}
-                        />
-                        <span className="text-ink-2">
-                          <span aria-hidden>·</span> {formatExamDate(set.exam_date)}
-                        </span>
-                      </span>
-                    ) : null}
-                  </div>
+      <SetWorkspace setId={set.id} setTitle={set.title} aiReady={aiConfigured()} grounding={grounding}>
+        <SetHeader
+          title={set.title}
+          breadcrumb={
+            <Link
+              href="/dashboard"
+              className="-ml-1 inline-flex items-center gap-1 rounded-sm px-1 py-0.5 text-sm text-ink-2 transition-colors duration-150 hover:text-ink"
+            >
+              <ChevronLeft className="size-4" strokeWidth={1.75} aria-hidden />
+              Dashboard
+            </Link>
+          }
+          meta={
+            set.course || set.exam_date || set.status !== "ready" ? (
+              <div className="mb-2.5 flex flex-wrap items-center gap-x-3 gap-y-2">
+                {set.course ? <CourseChip course={set.course} /> : null}
+                <SetStatusBadge status={set.status} />
+                {set.exam_date ? (
+                  <span
+                    className={cn(
+                      "inline-flex items-center gap-1.5 text-sm",
+                      urgency === "soon" ? "font-medium text-ink" : "text-ink-2",
+                    )}
+                  >
+                    <CalendarClock className="size-4 shrink-0" strokeWidth={1.75} aria-hidden />
+                    <LiveText
+                      kind="exam"
+                      value={set.exam_date}
+                      serverText={examCountdownText(set.exam_date)}
+                    />
+                    <span className="font-normal text-ink-2">
+                      <span aria-hidden>·</span> {formatExamDate(set.exam_date)}
+                    </span>
+                  </span>
                 ) : null}
-                <h1 className="font-display text-[1.75rem] leading-tight font-semibold tracking-[-0.02em] break-words text-ink sm:text-[2.125rem]">
-                  {set.title}
-                </h1>
               </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <AskClaudeButton />
-                <SetActions
-                  set={{
-                    id: set.id,
-                    title: set.title,
-                    description: set.description,
-                    exam_date: set.exam_date,
-                    course_id: set.course_id,
-                  }}
-                  courses={courses}
-                  userId={user.id}
-                />
-              </div>
-            </div>
-
-            <TabsNav
-              items={tabsFor(set.id)}
-              aria-label="Study set sections"
-              className="mt-5 border-b-0 sm:mt-6"
+            ) : null
+          }
+          actions={
+            <SetActions
+              set={{
+                id: set.id,
+                title: set.title,
+                description: set.description,
+                exam_date: set.exam_date,
+                course_id: set.course_id,
+              }}
+              courses={courses}
+              userId={user.id}
             />
-          </div>
-        </div>
+          }
+          tabs={<TabsNav items={tabsFor(set.id)} aria-label="Study set sections" className="border-b-0" />}
+        />
 
         {children}
       </SetWorkspace>

@@ -1,8 +1,9 @@
 import Link from "next/link";
-import { CalendarClock, History } from "lucide-react";
+import { CalendarClock, History, RotateCcw } from "lucide-react";
 import type { MasterySummary } from "@/lib/mastery";
 import type { SetStatus } from "@/lib/types";
 import { cn, pluralize } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { MasteryBar } from "@/components/ui/mastery-bar";
 import { ProgressRing } from "@/components/ui/progress-ring";
@@ -39,9 +40,11 @@ export function SetCard({ set, className }: { set: SetCardData; className?: stri
         {set.course ? <CourseChip course={set.course} /> : null}
         <SetStatusBadge status={set.status} />
         {summary.due > 0 ? (
-          <span className="inline-flex h-6 items-center rounded-sm bg-learning-soft px-2 text-xs font-medium text-learning-strong">
+          // Neutral, not amber: due cards include mastered ones up for review.
+          <Badge variant="neutral">
+            <RotateCcw strokeWidth={1.75} aria-hidden />
             {summary.due.toLocaleString("en-US")} due
-          </span>
+          </Badge>
         ) : null}
       </div>
 
@@ -90,7 +93,7 @@ export function SetCard({ set, className }: { set: SetCardData; className?: stri
           <span
             className={cn(
               "inline-flex items-center gap-1.5",
-              urgency === "soon" && "font-medium text-learning-strong",
+              urgency === "soon" && "font-medium text-ink",
             )}
             title={formatExamDate(set.exam_date)}
           >

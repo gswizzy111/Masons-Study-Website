@@ -13,7 +13,8 @@ type Props = { params: Promise<{ setId: string }> };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { setId } = await params;
-  const set = await getSet(setId).catch(() => null);
+  const set = await getSet(setId).catch(() => undefined);
+  if (set === null) return { title: "Set not found" };
   return { title: set ? `Meteor · ${set.title}` : "Meteor" };
 }
 

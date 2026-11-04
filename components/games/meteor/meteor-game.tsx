@@ -420,7 +420,7 @@ export function MeteorGame({
     if (!engine) return;
 
     if (phase === "recover" && landed) {
-      const grade = gradeAnswer(answer, landed.answer);
+      const grade = gradeAnswer(answer, landed.answer, { side: engine.answerWith });
       if (grade.correct) {
         clearLanded(engine, landed.key);
         setSprites(viewsOf(engine));
