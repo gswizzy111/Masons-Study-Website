@@ -94,83 +94,134 @@ To reset the local database to a clean copy of the migrations, run
 
 ## Production setup checklist
 
-1. **Create a Supabase project** at https://supabase.com/dashboard.
-2. **Run the migrations**, all of `supabase/migrations/` in name order,
-   before deploying the code that needs them. Either link the project and
-   push:
+Production uses the existing Supabase project **card-doc-test-temp**
+(project ref `kuvnqapzuevhpviilqpc`, API URL
+`https://kuvnqapzuevhpviilqpc.supabase.co`). It is shared with the Card Doc
+test copy, which lives in the `public` schema and must keep working
+untouched. Nothing below changes `public`, and the Authentication settings
+are only added to, never switched off.
 
-   ```bash
-   npx supabase link --project-ref <your-project-ref>
-   npx supabase db push
+1. **Run the migrations** in name order, before deploying the code that
+   needs them: paste each file into the SQL editor (Database > SQL Editor)
+   and run it, or apply them through the Supabase MCP `apply_migration`
+   tool (that is how the Card Doc test copy's migrations were applied).
+   - `20261104000000_init.sql`: the `study` schema, its tables, RLS
+     policies and grants, the private `materials` storage bucket with its
+     three `study: ...` policies, and the `study_on_auth_user_created`
+     trigger. Run it once: it stops with "relation already exists" if
+     `study` is already set up.
+   - `20261104000001_jobs_one_active.sql`: at most one queued or running
+     job of each kind per set
+   - `20261104000002_server_guards.sql`: checks that every uploaded file
+     path is the uploader's own, strips internal options from jobs users
+     create, and adds the per-user usage limits (`study.ai_usage`,
+     `study.take_ai_quota`). The app refuses AI requests until this one is
+     in.
+
+   The last two are safe to run again.
+
+   Don't use `npx supabase db push` on this project: its migration history
+   holds the Card Doc test copy's migrations, which aren't in this repo, so
+   the CLI refuses and suggests `supabase migration repair`, which would
+   rewrite the other app's history. Never run `npx supabase db reset
+   --linked` here: it wipes the whole database, Card Doc data included.
+2. **Expose the schema.** Project Settings > Data API > Exposed schemas:
+   add `study` and keep `public` and `graphql_public`. Without this every
+   app request fails with HTTP 406 ("The schema must be one of the
+   following").
+3. **Check the result** in the SQL editor:
+
+   ```sql
+   select count(*) from information_schema.tables where table_schema = 'study'; -- 14
+   select id, public from storage.buckets where id = 'materials';                -- materials, false
+   select count(*) from public.orders;                                           -- Card Doc data, unchanged
    ```
-
-   or paste each file into the SQL editor and run them in order:
-   - `20261104000000_init.sql`: tables, RLS policies, and the private
-     `materials` storage bucket
-   - `20261104000001_jobs_one_active.sql`: at most one queued or running job
-     of each kind per set
-   - `20261104000002_server_guards.sql`: checks that every uploaded file path
-     is the uploader's own, strips internal options from jobs users create,
-     and adds the per-user usage limits (`ai_usage`, `take_ai_quota`). The app
-     refuses AI requests until this one is in.
-
-   All three are safe to run again.
-3. **Configure Auth.**
-   - Authentication > URL Configuration:
-     - Site URL: your production URL, for example
-       `https://your-site.netlify.app`. Email links are built from it.
-     - Redirect URLs: `https://your-site.netlify.app/auth/callback` and
-       `https://your-site.netlify.app/auth/confirm` (add the same for any
-       custom domain, and `https://**--your-site.netlify.app/**` if you want
-       deploy previews to sign in).
-   - Authentication > Emails > Templates: replace the message body of
-     "Confirm signup" with the contents of
-     [`supabase/templates/confirmation.html`](supabase/templates/confirmation.html)
-     and "Reset password" with
-     [`supabase/templates/recovery.html`](supabase/templates/recovery.html).
-     Their links go to `/auth/confirm` with a `token_hash`, so they work on
-     any device, not only in the browser that asked for them:
-     - `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=signup&next=/onboarding`
-     - `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=recovery&next=/reset-password`
-
-     Suggested subjects: "Confirm your email for Mason's Study" and "Reset
-     your Mason's Study password". (Locally, `supabase/config.toml` already
-     uses these templates.)
-   - Authentication > Sign In / Providers > Email: set the minimum password
-     length to 8 (the app asks for at least 8 characters), and turn on
-     "Confirm email" if you want sign-ups confirmed.
-4. **Create the Netlify site** from this repository. `netlify.toml` already
+4. **Configure Auth.** These settings are project-wide and shared with the
+   Card Doc test copy, so add to them rather than change them.
+   - Authentication > URL Configuration: leave the **Site URL** as it is.
+     Under **Redirect URLs**, add `https://<mason-site>/**` (and the same
+     for a custom domain; `https://**--<mason-site>.netlify.app/**` if
+     deploy previews should sign in). The app's email links go to
+     `/auth/callback?next=/...`, and an exact `/auth/callback` entry does
+     not match that query string; when nothing matches, Supabase sends
+     people to the Site URL, which is the Card Doc site.
+   - Authentication > Emails > Templates: **keep the default templates.**
+     Their links go through Supabase and land on `/auth/callback` with a
+     one-time code, which the app already handles (the link has to be
+     opened in the same browser that asked for it). Don't paste
+     `supabase/templates/*.html` into this project: they are built on
+     `{{ .SiteURL }}`, which here is the Card Doc address, and templates
+     apply to every app in the project. Those templates are for the local
+     stack only.
+   - Email delivery: unless the project has custom SMTP (Authentication >
+     Emails > SMTP Settings), Supabase's built-in mailer only delivers to
+     members of the Supabase organization's team, a few emails per hour, so
+     confirmation and reset emails to the student would not arrive. The
+     simplest way to give the student an account is Authentication > Users
+     > Add user > Create new user, with "Auto Confirm User" on; they then
+     log in and finish onboarding. Custom SMTP is also project-wide (the
+     Card Doc app sends its own account emails through Resend, but check
+     before changing it).
+   - "Confirm email", the minimum password length and "Allow new users to
+     sign up" (Authentication > Sign In / Providers) are project-wide too.
+     Leave them as the Card Doc test copy needs them; the app already
+     requires passwords of at least 8 characters on its own forms.
+5. **Create the Netlify site** from this repository. `netlify.toml` already
    sets the build command (`npm run build`), the publish directory (`.next`)
    and the functions directory. Netlify installs its Next.js runtime
    automatically.
-5. **Set Netlify environment variables** (Project configuration > Environment
-   variables), with both the Builds and Functions scopes:
-   - `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (Supabase >
-     Project Settings > API)
-   - `SUPABASE_SERVICE_ROLE_KEY` (mark it secret)
+6. **Set Netlify environment variables** (Project configuration >
+   Environment variables), with both the Builds and Functions scopes:
+   - `NEXT_PUBLIC_SUPABASE_URL=https://kuvnqapzuevhpviilqpc.supabase.co`
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`: the project's anon (or publishable)
+     key, from Project Settings > API Keys
+   - `SUPABASE_SERVICE_ROLE_KEY`: the service_role (or secret) key; mark it
+     secret. It bypasses RLS for the whole project, the Card Doc test
+     tables included, so it only ever goes in server-side settings. The app
+     uses it only in the job runner, against `study`.
    - `ANTHROPIC_API_KEY` (mark it secret)
-   - `NEXT_PUBLIC_SITE_URL`: your production URL
+   - `NEXT_PUBLIC_SITE_URL`: Mason's Study's production URL (email links
+     are built from it)
    - Optional: `YOUTUBE_API_KEY` (YouTube Data API v3) and `ANTHROPIC_MODEL`
      (defaults to `claude-opus-5-5`)
 
-   Never put keys in `netlify.toml`. `NEXT_PUBLIC_*` values are baked in at
-   build time, so trigger a new deploy after changing any variable.
-6. **Deploy**, then sign up on the live site and build a small study set to
+   There is no schema variable: the app always uses `study`. Never put keys
+   in `netlify.toml`. `NEXT_PUBLIC_*` values are baked in at build time, so
+   trigger a new deploy after changing any variable.
+7. **Deploy**, then sign in on the live site and build a small study set to
    check uploads, the build job and the tutor end to end.
-7. **Lock it down.** The site uses your Claude key for whoever is signed
-   in, so once the student's account exists:
-   - Turn off new sign-ups: Authentication > Sign In / Providers > "Allow
-     new users to sign up" off. (To add someone later, invite them from
-     Authentication > Users.)
+8. **Limit who can run up the bill.** The site uses your Claude key for
+   whoever is signed in, and auth is shared with the Card Doc test copy:
+   any account in the project, made in either app, can sign in here.
+   - Don't turn off sign-ups project-wide without checking that the Card
+     Doc test app doesn't need them. Closing sign-ups for Mason's Study
+     alone would take an allowlist in the app, which isn't built yet.
+   - The per-user usage limits below always apply.
    - Set a monthly spend limit for the API key's workspace in the Claude
      Console as a backstop.
    - If you use `YOUTUBE_API_KEY`, restrict the key to the YouTube Data API
      v3 in Google Cloud.
 
+### Removing Mason's Study from the shared project
+
+Everything it added is named for it. In the SQL editor:
+
+```sql
+drop trigger if exists study_on_auth_user_created on auth.users;
+drop policy if exists "study: read own material files" on storage.objects;
+drop policy if exists "study: upload own material files" on storage.objects;
+drop policy if exists "study: delete own material files" on storage.objects;
+drop schema study cascade;
+```
+
+Then empty and delete the `materials` bucket in Storage, remove `study`
+from the exposed schemas, and delete Mason's Study's redirect URLs and user
+accounts. The `public` schema is never involved.
+
 ## Usage limits
 
 Each account has limits on what costs money, checked in the database
-(`take_ai_quota_for` in `supabase/migrations/20261104000002_server_guards.sql`):
+(`study.take_ai_quota_for` in `supabase/migrations/20261104000002_server_guards.sql`):
 
 | What | Per hour | Per day |
 |---|---|---|
@@ -195,14 +246,14 @@ before validating the constraint:
 
 ```sql
 select id, user_id, set_id, storage_path, status
-from public.materials
+from study.materials
 where storage_path is not null
   and storage_path not like user_id::text || '/' || set_id::text || '/%';
 ```
 
 Any row there was written outside the app; treat its `content_text` as
 suspect, delete the row, then run
-`alter table public.materials validate constraint materials_storage_path_owned;`.
+`alter table study.materials validate constraint materials_storage_path_owned;`.
 
 ## How background jobs run
 
@@ -217,7 +268,8 @@ jobs:
    `/.netlify/functions/run-job` (`netlify/functions/run-job.mts`), which can
    run for up to 15 minutes. Under `next dev` (or any host without that
    function), the job runs inside the Next server after the response is sent.
-3. The runner uses the Supabase service-role key, claims the job atomically
+3. The runner uses the Supabase service-role key (through
+   `lib/supabase/admin.ts`, so it also reads and writes `study`), claims the job atomically
    (so duplicate triggers are harmless), and writes `progress` and a
    readable `message` as it goes. It ends `done` or `error`.
 4. The page follows the job with `useJob()` / `useLatestJob()`
