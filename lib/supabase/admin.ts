@@ -4,6 +4,7 @@
 // function bundles this file outside Next.
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { publicEnv, serverEnv } from "../env";
+import { DB_SCHEMA } from "./schema";
 
 export function createAdminClient(): SupabaseClient {
   const url = publicEnv.supabaseUrl;
@@ -13,11 +14,14 @@ export function createAdminClient(): SupabaseClient {
       "Supabase service role is not configured. Set NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.",
     );
   }
+  // The app has no generated Database types, so the schema name in the client's
+  // type adds no checking; keep the plain SupabaseClient type used everywhere.
   return createClient(url, serviceRoleKey, {
+    db: { schema: DB_SCHEMA },
     auth: {
       persistSession: false,
       autoRefreshToken: false,
       detectSessionInUrl: false,
     },
-  });
+  }) as unknown as SupabaseClient;
 }

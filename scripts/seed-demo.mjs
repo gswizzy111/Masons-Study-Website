@@ -28,7 +28,10 @@ if (!url || !key) throw new Error("Set NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SER
 if (!/127\.0\.0\.1|localhost/.test(url)) throw new Error(`Refusing to seed a non-local Supabase (${url})`);
 
 const [email = `demo-${Date.now()}@test.local`, password = "password123", flag] = process.argv.slice(2);
-const db = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+const db = createClient(url, key, {
+  db: { schema: "study" },
+  auth: { persistSession: false, autoRefreshToken: false },
+});
 
 const { data: created, error: userErr } = await db.auth.admin.createUser({
   email,

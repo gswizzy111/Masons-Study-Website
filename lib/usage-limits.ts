@@ -1,8 +1,8 @@
 // Per-user limits on Claude, YouTube and background jobs, so one account
 // can't run up the site's API bills. The limits live in the database
-// (public.take_ai_quota_for in supabase/migrations/20261104000002_server_guards.sql):
+// (study.take_ai_quota_for in supabase/migrations/20261104000002_server_guards.sql):
 // route handlers check them with take_ai_quota(), and every job a user
-// inserts is counted by a trigger on public.jobs.
+// inserts is counted by a trigger on study.jobs.
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type UsageKind = "chat" | "build_set" | "exam_questions" | "videos";

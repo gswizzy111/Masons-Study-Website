@@ -7,6 +7,7 @@ import { createServerClient } from "@supabase/ssr";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { publicEnv } from "@/lib/env";
 import { safeNextPath } from "@/lib/safe-next";
+import { DB_SCHEMA } from "@/lib/supabase/schema";
 
 /** Header proxy.ts sets on every page request: the current pathname. */
 export const PATHNAME_HEADER = "x-pathname";
@@ -21,7 +22,10 @@ export async function createClient(): Promise<SupabaseClient> {
     );
   }
   const cookieStore = await cookies();
+  // The app has no generated Database types, so the schema name in the client's
+  // type adds no checking; keep the plain SupabaseClient type used everywhere.
   return createServerClient(publicEnv.supabaseUrl, publicEnv.supabaseAnonKey, {
+    db: { schema: DB_SCHEMA },
     cookies: {
       getAll() {
         return cookieStore.getAll();
@@ -37,7 +41,7 @@ export async function createClient(): Promise<SupabaseClient> {
         }
       },
     },
-  });
+  }) as unknown as SupabaseClient;
 }
 
 /**

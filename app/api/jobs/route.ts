@@ -3,7 +3,7 @@
 // starts it. 201 { jobId }; 503 when Claude isn't configured. If a job of the same kind is already queued or
 // running for the set, answers 409 with that job's id instead. When the
 // user has started too many jobs of this kind lately, answers 429 (the
-// limit is enforced by a trigger on public.jobs, see lib/usage-limits.ts).
+// limit is enforced by a trigger on study.jobs, see lib/usage-limits.ts).
 // See docs/ARCHITECTURE.md section 8.
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";

@@ -3,6 +3,7 @@
 import { createBrowserClient } from "@supabase/ssr";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { publicEnv } from "@/lib/env";
+import { DB_SCHEMA } from "@/lib/supabase/schema";
 
 let browserClient: SupabaseClient | undefined;
 
@@ -14,6 +15,10 @@ export function createClient(): SupabaseClient {
       "Supabase is not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.",
     );
   }
-  browserClient = createBrowserClient(publicEnv.supabaseUrl, publicEnv.supabaseAnonKey);
+  // The app has no generated Database types, so the schema name in the client's
+  // type adds no checking; keep the plain SupabaseClient type used everywhere.
+  browserClient = createBrowserClient(publicEnv.supabaseUrl, publicEnv.supabaseAnonKey, {
+    db: { schema: DB_SCHEMA },
+  }) as unknown as SupabaseClient;
   return browserClient;
 }

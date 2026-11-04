@@ -10,8 +10,8 @@
 -- builds: <user_id>/<set_id>/<uuid>-<safe file name>. A CHECK covers inserts
 -- and updates alike (the "own materials" policy is FOR ALL).
 -- ---------------------------------------------------------------------------
-alter table public.materials drop constraint if exists materials_storage_path_owned;
-alter table public.materials
+alter table study.materials drop constraint if exists materials_storage_path_owned;
+alter table study.materials
   add constraint materials_storage_path_owned check (
     storage_path is null
     or storage_path ~ (
@@ -23,7 +23,7 @@ alter table public.materials
 -- look at the rows (see README "Security checks") before validating.
 do $$
 begin
-  alter table public.materials validate constraint materials_storage_path_owned;
+  alter table study.materials validate constraint materials_storage_path_owned;
 exception when check_violation then
   raise warning 'materials_storage_path_owned: some existing rows do not match; review them, then validate the constraint';
 end;
@@ -35,18 +35,18 @@ $$;
 -- their own rows. Rows are not tied to a set, so deleting a set does not
 -- reset the count.
 -- ---------------------------------------------------------------------------
-create table if not exists public.ai_usage (
+create table if not exists study.ai_usage (
   id bigint generated always as identity primary key,
   user_id uuid not null references auth.users (id) on delete cascade,
   kind text not null check (kind in ('chat', 'build_set', 'exam_questions', 'videos')),
   cost integer not null default 1 check (cost between 1 and 1000),
   created_at timestamptz not null default now()
 );
-create index if not exists ai_usage_user_kind_idx on public.ai_usage (user_id, kind, created_at desc);
-alter table public.ai_usage enable row level security;
+create index if not exists ai_usage_user_kind_idx on study.ai_usage (user_id, kind, created_at desc);
+alter table study.ai_usage enable row level security;
 
-drop policy if exists "read own ai usage" on public.ai_usage;
-create policy "read own ai usage" on public.ai_usage
+drop policy if exists "read own ai usage" on study.ai_usage;
+create policy "read own ai usage" on study.ai_usage
   for select to authenticated
   using (user_id = (select auth.uid()));
 
@@ -54,7 +54,7 @@ create policy "read own ai usage" on public.ai_usage
 -- hourly and daily limits. Returns 0 when recorded, otherwise the number of
 -- seconds until enough earlier use expires. Internal: called by
 -- take_ai_quota() and the jobs trigger, never directly by users.
-create or replace function public.take_ai_quota_for(p_user uuid, p_kind text, p_cost integer default 1)
+create or replace function study.take_ai_quota_for(p_user uuid, p_kind text, p_cost integer default 1)
 returns integer
 language plpgsql
 security definer
@@ -90,35 +90,35 @@ begin
     coalesce(sum(u.cost) filter (where u.created_at > now() - interval '1 hour'), 0),
     coalesce(sum(u.cost), 0)
   into used_hour, used_day
-  from public.ai_usage u
+  from study.ai_usage u
   where u.user_id = p_user and u.kind = p_kind and u.created_at > now() - interval '1 day';
 
   if used_hour + v_cost > hour_limit then
     select ceil(extract(epoch from (min(u.created_at) + interval '1 hour' - now())))::integer
       into wait_seconds
-      from public.ai_usage u
+      from study.ai_usage u
       where u.user_id = p_user and u.kind = p_kind and u.created_at > now() - interval '1 hour';
     return greatest(60, coalesce(wait_seconds, 3600));
   end if;
   if used_day + v_cost > day_limit then
     select ceil(extract(epoch from (min(u.created_at) + interval '1 day' - now())))::integer
       into wait_seconds
-      from public.ai_usage u
+      from study.ai_usage u
       where u.user_id = p_user and u.kind = p_kind and u.created_at > now() - interval '1 day';
     return greatest(60, coalesce(wait_seconds, 86400));
   end if;
 
-  insert into public.ai_usage (user_id, kind, cost) values (p_user, p_kind, v_cost);
+  insert into study.ai_usage (user_id, kind, cost) values (p_user, p_kind, v_cost);
   return 0;
 end;
 $$;
 
-revoke all on function public.take_ai_quota_for(uuid, text, integer) from public;
-revoke all on function public.take_ai_quota_for(uuid, text, integer) from anon, authenticated;
+revoke all on function study.take_ai_quota_for(uuid, text, integer) from public;
+revoke all on function study.take_ai_quota_for(uuid, text, integer) from anon, authenticated;
 
 -- The signed-in user's own quota check, for route handlers (RPC with the
 -- user's client). Calling it directly only ever uses up the caller's quota.
-create or replace function public.take_ai_quota(p_kind text, p_cost integer default 1)
+create or replace function study.take_ai_quota(p_kind text, p_cost integer default 1)
 returns integer
 language plpgsql
 security definer
@@ -130,13 +130,13 @@ begin
   if uid is null then
     raise exception 'take_ai_quota: not signed in' using errcode = '42501';
   end if;
-  return public.take_ai_quota_for(uid, p_kind, p_cost);
+  return study.take_ai_quota_for(uid, p_kind, p_cost);
 end;
 $$;
 
-revoke all on function public.take_ai_quota(text, integer) from public;
-revoke all on function public.take_ai_quota(text, integer) from anon;
-grant execute on function public.take_ai_quota(text, integer) to authenticated;
+revoke all on function study.take_ai_quota(text, integer) from public;
+revoke all on function study.take_ai_quota(text, integer) from anon;
+grant execute on function study.take_ai_quota(text, integer) to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- 3. Jobs that users insert carry only the options /api/jobs accepts.
@@ -146,7 +146,7 @@ grant execute on function public.take_ai_quota(text, integer) to authenticated;
 -- toward the build / question limits (raises PT429, which PostgREST answers
 -- with HTTP 429). Service-role inserts are left alone.
 -- ---------------------------------------------------------------------------
-create or replace function public.jobs_guard_user_insert()
+create or replace function study.jobs_guard_user_insert()
 returns trigger
 language plpgsql
 security definer
@@ -178,7 +178,7 @@ begin
   new.created_at := now();
   new.updated_at := now();
 
-  wait_seconds := public.take_ai_quota_for(new.user_id, new.kind, 1);
+  wait_seconds := study.take_ai_quota_for(new.user_id, new.kind, 1);
   if wait_seconds > 0 then
     raise exception 'usage_limit'
       using errcode = 'PT429', detail = wait_seconds::text,
@@ -188,10 +188,10 @@ begin
 end;
 $$;
 
-revoke all on function public.jobs_guard_user_insert() from public;
-revoke all on function public.jobs_guard_user_insert() from anon, authenticated;
+revoke all on function study.jobs_guard_user_insert() from public;
+revoke all on function study.jobs_guard_user_insert() from anon, authenticated;
 
-drop trigger if exists jobs_guard_user_insert on public.jobs;
+drop trigger if exists jobs_guard_user_insert on study.jobs;
 create trigger jobs_guard_user_insert
-  before insert on public.jobs
-  for each row execute function public.jobs_guard_user_insert();
+  before insert on study.jobs
+  for each row execute function study.jobs_guard_user_insert();
