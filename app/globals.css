@@ -1,26 +1,744 @@
 @import "tailwindcss";
 
+/*
+ * Mason's Study design system. "Lab notebook, calm focus."
+ * Tokens live here as CSS custom properties (light on :root, dark on .dark)
+ * and are exposed to Tailwind through @theme inline, so classes like
+ * bg-bg, bg-surface, text-ink, text-ink-2, border-line, bg-accent,
+ * text-accent-ink, bg-accent-soft and text-learning all work.
+ * See DESIGN.md for the rules.
+ */
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ------------------------------------------------------------------ */
+/* Tokens                                                              */
+/* ------------------------------------------------------------------ */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: light;
+
+  --bg: #f7f6f2;
+  --surface: #ffffff;
+  --surface-2: #f0eee8;
+  --ink: #16181c;
+  --ink-2: #585e68;
+  --ink-3: #7e848d;
+  --line: #e4e1d8;
+
+  --accent: #0e7a6a;
+  --accent-hover: #0b6457;
+  --accent-ink: #ffffff;
+  --accent-soft: #e1f0ec;
+
+  --learning: #a86200;
+  --learning-soft: #fbefd9;
+  --not-studied: #9aa0a8;
+  --mastered: var(--accent);
+
+  --danger: #b42318;
+  --danger-soft: #fdecea;
+
+  /* Additions (non-breaking). Text that sits on the soft tints, and
+     placeholders, need a little more contrast than the base tokens give
+     to reach WCAG AA at small sizes. */
+  --accent-strong: #0b6457;
+  --learning-strong: #8a5000;
+  --danger-ink: #ffffff;
+  --ink-placeholder: #6b717a;
+  --line-strong: #cfcbc0;
+
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 16px;
+
+  --elev-1: 0 1px 2px rgb(16 18 22 / 0.06);
+  --elev-2: 0 1px 2px rgb(16 18 22 / 0.06), 0 8px 24px -12px rgb(16 18 22 / 0.14);
+  --elev-3: 0 2px 4px rgb(16 18 22 / 0.06), 0 18px 40px -16px rgb(16 18 22 / 0.22);
+
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+
+  --header-h: 64px;
+}
+
+.dark {
+  color-scheme: dark;
+
+  --bg: #0e1012;
+  --surface: #16191c;
+  --surface-2: #1d2125;
+  --ink: #eceef0;
+  --ink-2: #a3aab3;
+  --ink-3: #7d858f;
+  --line: #272c31;
+
+  --accent: #3fc1a7;
+  --accent-hover: #5ed0b8;
+  --accent-ink: #06221c;
+  --accent-soft: #12332d;
+
+  --learning: #e3a33a;
+  --learning-soft: #3a2a0f;
+  --not-studied: #5e656e;
+  --mastered: var(--accent);
+
+  --danger: #f07167;
+  --danger-soft: #3a1614;
+
+  --accent-strong: #5ed0b8;
+  --learning-strong: #e3a33a;
+  --danger-ink: #2a0b08;
+  --ink-placeholder: #7d858f;
+  --line-strong: #353b42;
+
+  --elev-1: 0 1px 2px rgb(0 0 0 / 0.4);
+  --elev-2: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px -12px rgb(0 0 0 / 0.6);
+  --elev-3: 0 2px 4px rgb(0 0 0 / 0.4), 0 18px 40px -16px rgb(0 0 0 / 0.7);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-ink-placeholder: var(--ink-placeholder);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-strong: var(--accent-strong);
+  --color-learning: var(--learning);
+  --color-learning-soft: var(--learning-soft);
+  --color-learning-strong: var(--learning-strong);
+  --color-not-studied: var(--not-studied);
+  --color-mastered: var(--mastered);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-danger-ink: var(--danger-ink);
+
+  --font-display: var(--font-fraunces), ui-serif, Georgia, "Times New Roman", serif;
+  --font-sans: var(--font-hanken), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+  /* Use the standard names in components (tailwind-merge knows them):
+     shadow-xs/sm for controls, shadow-md for cards, shadow-lg for
+     popovers and dialogs. shadow-card and shadow-pop are aliases. */
+  --shadow-xs: var(--elev-1);
+  --shadow-sm: var(--elev-1);
+  --shadow-md: var(--elev-2);
+  --shadow-lg: var(--elev-3);
+  --shadow-xl: var(--elev-3);
+  --shadow-card: var(--elev-2);
+  --shadow-pop: var(--elev-3);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/* Radii: one scale for the whole product. Controls 10px, small controls
+   and tags 6px, containers 16px. */
+@theme {
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-2xl: 24px;
+
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+
+  --animate-fade-in: fade-in 180ms var(--ease-out);
+  --animate-fade-out: fade-out 140ms ease-in;
+  --animate-pop-in: pop-in 160ms var(--ease-out);
+  --animate-pop-out: pop-out 120ms ease-in;
+  --animate-dialog-in: dialog-in 220ms var(--ease-out);
+  --animate-dialog-out: dialog-out 150ms ease-in;
+  --animate-sheet-in: sheet-in 280ms var(--ease-out);
+  --animate-sheet-out: sheet-out 200ms ease-in;
+  --animate-drawer-in: drawer-in 260ms var(--ease-out);
+  --animate-drawer-out: drawer-out 180ms ease-in;
+  --animate-rise-in: rise-in 420ms var(--ease-out) both;
+  --animate-progress-slide: progress-slide 1.4s var(--ease-in-out) infinite;
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes fade-out {
+    to {
+      opacity: 0;
+    }
+  }
+  @keyframes pop-in {
+    from {
+      opacity: 0;
+      scale: 0.96;
+    }
+  }
+  @keyframes pop-out {
+    to {
+      opacity: 0;
+      scale: 0.97;
+    }
+  }
+  @keyframes dialog-in {
+    from {
+      opacity: 0;
+      scale: 0.96;
+    }
+  }
+  @keyframes dialog-out {
+    to {
+      opacity: 0;
+      scale: 0.98;
+    }
+  }
+  @keyframes sheet-in {
+    from {
+      transform: translateY(100%);
+    }
+  }
+  @keyframes sheet-out {
+    to {
+      transform: translateY(100%);
+    }
+  }
+  @keyframes drawer-in {
+    from {
+      transform: translateX(100%);
+    }
+  }
+  @keyframes drawer-out {
+    to {
+      transform: translateX(100%);
+    }
+  }
+  @keyframes progress-slide {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(300%);
+    }
+  }
+  @keyframes rise-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* ------------------------------------------------------------------ */
+/* Base                                                                */
+/* ------------------------------------------------------------------ */
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+    scroll-padding-top: calc(var(--header-h) + 12px);
+  }
+
+  body {
+    min-height: 100dvh;
+    background-color: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 1rem;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    font-optical-sizing: auto;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklab, var(--accent) 24%, transparent);
+    color: var(--ink);
+  }
+
+  /* One focus style everywhere: a 2px accent ring with a small gap. */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  [hidden]:where(:not([hidden="until-found"])) {
+    display: none !important;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--ink-placeholder);
+    opacity: 1;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+
+  .font-display {
+    font-optical-sizing: auto;
+    letter-spacing: -0.012em;
+  }
+
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Graph-paper texture for the occasional notebook surface. Not named bg-*
+   so tailwind-merge does not treat it as a background color. */
+@utility graph-paper {
+  background-image:
+    linear-gradient(to right, color-mix(in oklab, var(--line) 70%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in oklab, var(--line) 70%, transparent) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Rendered markdown: study guides, tutor answers, explanations        */
+/* ------------------------------------------------------------------ */
+
+@layer components {
+  .prose-study {
+    --prose-gap: 1em;
+    max-width: 68ch;
+    color: var(--ink);
+    font-size: 1rem;
+    line-height: 1.7;
+    overflow-wrap: break-word;
+  }
+
+  @media (min-width: 640px) {
+    .prose-study {
+      font-size: 1.0625rem;
+    }
+  }
+
+  .prose-study :where(p, ul, ol, pre, .table-wrap, blockquote, figure) {
+    margin-top: 0;
+    margin-bottom: var(--prose-gap);
+  }
+
+  .prose-study :where(h1, h2, h3) {
+    font-family: var(--font-display);
+    font-optical-sizing: auto;
+    font-weight: 600;
+    color: var(--ink);
+    text-wrap: balance;
+    scroll-margin-top: calc(var(--header-h) + 16px);
+  }
+
+  .prose-study :where(h1) {
+    font-size: 1.875rem;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    margin: 0 0 0.6em;
+  }
+
+  .prose-study :where(h2) {
+    font-size: 1.4375rem;
+    line-height: 1.25;
+    letter-spacing: -0.015em;
+    margin: 2.1em 0 0.7em;
+    padding-top: 1.1em;
+    border-top: 1px solid var(--line);
+  }
+
+  .prose-study > h2:first-child {
+    padding-top: 0;
+    border-top: 0;
+  }
+
+  .prose-study :where(h3) {
+    font-size: 1.1875rem;
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+    margin: 1.7em 0 0.5em;
+  }
+
+  .prose-study :where(h4, h5, h6) {
+    font-family: var(--font-sans);
+    font-size: 1rem;
+    font-weight: 650;
+    line-height: 1.4;
+    color: var(--ink);
+    margin: 1.5em 0 0.4em;
+    scroll-margin-top: calc(var(--header-h) + 16px);
+  }
+
+  .prose-study :where(h1, h2, h3, h4) + :where(p, ul, ol) {
+    margin-top: 0;
+  }
+
+  .prose-study :where(strong, b) {
+    font-weight: 650;
+    color: var(--ink);
+  }
+
+  .prose-study :where(em, i) {
+    font-style: italic;
+  }
+
+  .prose-study :where(a) {
+    color: var(--accent-strong);
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.18em;
+    text-decoration-color: color-mix(in oklab, var(--accent) 55%, transparent);
+    transition: text-decoration-color 150ms var(--ease-out), color 150ms var(--ease-out);
+  }
+
+  .prose-study :where(a):hover {
+    color: var(--accent-hover);
+    text-decoration-color: currentColor;
+  }
+
+  .prose-study :where(ul, ol) {
+    padding-left: 1.4em;
+  }
+
+  .prose-study :where(ul) {
+    list-style: disc;
+  }
+
+  .prose-study :where(ol) {
+    list-style: decimal;
+  }
+
+  .prose-study :where(ul ul) {
+    list-style: circle;
+  }
+
+  .prose-study :where(li) {
+    margin: 0.3em 0;
+    padding-left: 0.2em;
+  }
+
+  .prose-study :where(li > ul, li > ol) {
+    margin: 0.3em 0 0.4em;
+  }
+
+  .prose-study :where(li > p) {
+    margin: 0.3em 0;
+  }
+
+  .prose-study :where(ul > li)::marker {
+    color: var(--ink-3);
+  }
+
+  .prose-study :where(ol > li)::marker {
+    color: var(--ink-2);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* GitHub-style task lists */
+  .prose-study :where(.contains-task-list) {
+    list-style: none;
+    padding-left: 0.2em;
+  }
+
+  .prose-study :where(.task-list-item) input[type="checkbox"] {
+    margin: 0 0.55em 0 0;
+    accent-color: var(--accent);
+    translate: 0 0.1em;
+  }
+
+  /* Blockquotes are call-outs ("High-yield", "Clinical connection").
+     A bold first word becomes the call-out label. */
+  .prose-study :where(blockquote) {
+    margin-left: 0;
+    margin-right: 0;
+    padding: 0.85em 1.1em;
+    border-left: 3px solid var(--accent);
+    border-radius: 0 var(--radius) var(--radius) 0;
+    background-color: var(--accent-soft);
+    color: var(--ink);
+  }
+
+  .prose-study :where(blockquote) > :last-child {
+    margin-bottom: 0;
+  }
+
+  .prose-study :where(blockquote) > :where(p:first-child) > :where(strong:first-child) {
+    color: var(--accent-strong);
+  }
+
+  .prose-study :where(blockquote blockquote) {
+    background-color: transparent;
+    border-left-color: var(--line-strong);
+  }
+
+  .prose-study :where(code) {
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+    font-size: 0.86em;
+    padding: 0.12em 0.38em;
+    border-radius: var(--radius-sm);
+    background-color: var(--surface-2);
+    border: 1px solid var(--line);
+    overflow-wrap: anywhere;
+  }
+
+  .prose-study :where(pre) {
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+    line-height: 1.6;
+    padding: 0.95em 1.1em;
+    border-radius: var(--radius);
+    background-color: var(--surface-2);
+    border: 1px solid var(--line);
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .prose-study :where(pre code) {
+    font-size: inherit;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    overflow-wrap: normal;
+  }
+
+  .prose-study :where(hr) {
+    border: 0;
+    border-top: 1px solid var(--line);
+    margin: 2.2em 0;
+  }
+
+  .prose-study :where(img) {
+    max-width: 100%;
+    height: auto;
+    border-radius: var(--radius);
+  }
+
+  .prose-study :where(del) {
+    color: var(--ink-3);
+  }
+
+  .prose-study :where(sup, sub) {
+    font-size: 0.75em;
+    line-height: 0;
+  }
+
+  /* Tables: wrapped by <Markdown> in .table-wrap so they scroll sideways
+     on phones instead of breaking the page. Zebra rows, no row rules. */
+  .prose-study :where(.table-wrap) {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background-color: var(--surface);
+    margin-top: 1.25em;
+    margin-bottom: 1.25em;
+  }
+
+  .prose-study :where(table) {
+    width: 100%;
+    min-width: 28rem;
+    border-collapse: collapse;
+    font-size: 0.9375rem;
+    line-height: 1.5;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .prose-study :where(thead th) {
+    text-align: left;
+    font-weight: 600;
+    color: var(--ink);
+    background-color: var(--surface-2);
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+
+  .prose-study :where(th, td) {
+    padding: 0.6em 0.9em;
+    vertical-align: top;
+  }
+
+  .prose-study :where(tbody tr:nth-child(even)) {
+    background-color: color-mix(in oklab, var(--surface-2) 60%, transparent);
+  }
+
+  .prose-study :where(td) > :last-child {
+    margin-bottom: 0;
+  }
+
+  /* GFM footnotes */
+  .prose-study :where(.footnotes) {
+    margin-top: 2.5em;
+    padding-top: 1em;
+    border-top: 1px solid var(--line);
+    font-size: 0.875em;
+    color: var(--ink-2);
+  }
+
+  /* Compact variant for chat bubbles and explanations. */
+  .prose-study.prose-compact {
+    --prose-gap: 0.7em;
+    font-size: 0.9375rem;
+    line-height: 1.6;
+  }
+
+  .prose-study.prose-compact :where(h1) {
+    font-size: 1.25rem;
+  }
+
+  .prose-study.prose-compact :where(h2) {
+    font-size: 1.125rem;
+    margin-top: 1.4em;
+    padding-top: 0;
+    border-top: 0;
+  }
+
+  .prose-study.prose-compact :where(h3) {
+    font-size: 1rem;
+    margin-top: 1.2em;
+  }
+
+  /* Last in the block so they win over the heading margins above. */
+  .prose-study > :first-child {
+    margin-top: 0;
+  }
+
+  .prose-study > :last-child {
+    margin-bottom: 0;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Reduced motion                                                      */
+/* ------------------------------------------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* A loading spinner is information, not decoration: keep it turning, slowly. */
+  .animate-spin {
+    animation-duration: 1.6s !important;
+    animation-iteration-count: infinite !important;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Print: black on white, chrome hidden                                */
+/* ------------------------------------------------------------------ */
+
+@media print {
+  :root,
+  .dark {
+    color-scheme: light;
+    --bg: #ffffff;
+    --surface: #ffffff;
+    --surface-2: #f3f3f3;
+    --ink: #000000;
+    --ink-2: #222222;
+    --ink-3: #444444;
+    --line: #bbbbbb;
+    --accent: #000000;
+    --accent-strong: #000000;
+    --accent-soft: #ffffff;
+    --elev-1: none;
+    --elev-2: none;
+    --elev-3: none;
+  }
+
+  [data-print-hide],
+  [data-print-hide] * {
+    display: none !important;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  body {
+    font-size: 11pt;
+  }
+
+  .prose-study {
+    max-width: none;
+    font-size: 11pt;
+    line-height: 1.5;
+    color: #000000;
+  }
+
+  .prose-study :where(a) {
+    color: #000000;
+    text-decoration: underline;
+  }
+
+  .prose-study :where(h1, h2, h3, h4) {
+    break-after: avoid;
+    page-break-after: avoid;
+    color: #000000;
+  }
+
+  .prose-study :where(blockquote) {
+    background: none;
+    border-left: 2px solid #000000;
+  }
+
+  .prose-study :where(table, blockquote, pre, figure, img) {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .prose-study :where(.table-wrap) {
+    overflow: visible;
+    border-color: #999999;
+  }
+
+  .prose-study :where(table) {
+    min-width: 0;
+  }
+
+  .prose-study :where(tbody tr:nth-child(even)) {
+    background: #f3f3f3;
+  }
+
+  @page {
+    margin: 16mm 14mm;
+  }
 }

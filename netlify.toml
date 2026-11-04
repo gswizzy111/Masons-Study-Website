@@ -1,0 +1,25 @@
+# Netlify build settings. Secrets never go here: set them in the Netlify UI
+# (Project configuration > Environment variables). See README.md.
+# Next.js runs on Netlify's Next.js runtime (@netlify/plugin-nextjs), which
+# Netlify installs automatically; don't pin it.
+
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  # Next.js 16 needs Node 20.9 or newer.
+  NODE_VERSION = "22"
+
+# Owned by B8 pipeline: background function settings (run-job.mts).
+# run-job.mts sets `background: true` in its own config export, so it may run
+# for up to 15 minutes. Settings below are scoped to that function so they
+# never touch the functions the Next.js runtime generates. unpdf loads its
+# PDF.js build with a runtime import, so it ships as a node module instead of
+# being bundled.
+[functions]
+  directory = "netlify/functions"
+
+[functions."run-job"]
+  node_bundler = "esbuild"
+  external_node_modules = ["unpdf"]
