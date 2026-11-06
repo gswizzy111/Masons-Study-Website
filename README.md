@@ -117,8 +117,10 @@ are only added to, never switched off.
      create, and adds the per-user usage limits (`study.ai_usage`,
      `study.take_ai_quota`). The app refuses AI requests until this one is
      in.
+   - `20261104000003_function_privileges.sql`: removes needless EXECUTE
+     rights on internal `study` functions.
 
-   The last two are safe to run again.
+   The last three are safe to run again.
 
    Don't use `npx supabase db push` on this project: its migration history
    holds the Card Doc test copy's migrations, which aren't in this repo, so
@@ -198,10 +200,11 @@ are only added to, never switched off.
    check uploads, the build job and the tutor end to end.
 8. **Limit who can run up the bill.** The site uses your Claude key for
    whoever is signed in, and auth is shared with the Card Doc test copy:
-   any account in the project, made in either app, can sign in here.
-   - Don't turn off sign-ups project-wide without checking that the Card
-     Doc test app doesn't need them. Closing sign-ups for Mason's Study
-     alone would take an allowlist in the app, which isn't built yet.
+   any account in the project, made in either app, could sign in here.
+   - Set `ALLOWED_EMAILS` (step 6). It is what keeps other accounts in the
+     shared project out of Mason's Study; don't turn off sign-ups
+     project-wide without checking that the Card Doc test app doesn't need
+     them.
    - The per-user usage limits below always apply.
    - Set a monthly spend limit for the API key's workspace in the Claude
      Console as a backstop.
